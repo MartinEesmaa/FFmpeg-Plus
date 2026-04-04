@@ -64,7 +64,7 @@ static int compile(SwsContext *ctx, SwsOpList *ops, SwsCompiledOp *out)
         const SwsOp *op = &ops->ops[n];
         switch (op->op) {
         case SWS_OP_READ:
-            if ((op->rw.packed && op->rw.elems != 1) || op->rw.frac)
+            if ((op->rw.packed && op->rw.elems != 1) || op->rw.frac || op->rw.filter)
                 return AVERROR(ENOTSUP);
             for (int i = 0; i < op->rw.elems; i++)
                 p.index[i] = i;
@@ -86,20 +86,20 @@ static int compile(SwsContext *ctx, SwsOpList *ops, SwsCompiledOp *out)
 
         case SWS_OP_CLEAR:
             for (int i = 0; i < 4; i++) {
-                if (!op->c.q4[i].den)
+                if (!op->clear.value[i].den)
                     continue;
-                if (op->c.q4[i].den != 1)
+                if (op->clear.value[i].den != 1)
                     return AVERROR(ENOTSUP);
 
                 /* Ensure all bytes to be cleared are the same, because we
                  * can't memset on multi-byte sequences */
-                uint8_t val = op->c.q4[i].num & 0xFF;
+                uint8_t val = op->clear.value[i].num & 0xFF;
                 uint32_t ref = val;
                 switch (ff_sws_pixel_type_size(op->type)) {
                 case 2: ref *= 0x101; break;
                 case 4: ref *= 0x1010101; break;
                 }
-                if (ref != op->c.q4[i].num)
+                if (ref != op->clear.value[i].num)
                     return AVERROR(ENOTSUP);
                 p.clear_value[i] = val;
                 p.index[i] = -1;
@@ -107,7 +107,7 @@ static int compile(SwsContext *ctx, SwsOpList *ops, SwsCompiledOp *out)
             break;
 
         case SWS_OP_WRITE:
-            if ((op->rw.packed && op->rw.elems != 1) || op->rw.frac)
+            if ((op->rw.packed && op->rw.elems != 1) || op->rw.frac || op->rw.filter)
                 return AVERROR(ENOTSUP);
             p.num_planes = op->rw.elems;
             break;

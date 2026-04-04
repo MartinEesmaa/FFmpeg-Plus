@@ -141,8 +141,8 @@ struc SwsOpExec
     .out_sub_y4 resb 4
     .in_sub_x4 resb 4
     .out_sub_x4 resb 4
-    .in_hwframe_ref resq 1
-    .out_hwframe_ref resq 1
+    .in_bump_y resq 1
+    .in_offset_x resq 1
 endstruc
 
 struc SwsOpImpl
@@ -242,28 +242,33 @@ endstruc
 %define execq   r0q
 %define implq   r1q
 %define bxd     r2d
+%define bxq     r2q
 %define yd      r3d
+%define yq      r3q
 
 ; Extra registers for free use by kernels, not saved between ops
 %define tmp0q   r4q
 %define tmp1q   r5q
+%define tmp2q   r6q
 
 %define tmp0d   r4d
 %define tmp1d   r5d
+%define tmp2d   r6d
 
 %define tmp0w   r4w
 %define tmp1w   r5w
+%define tmp2w   r6w
 
 ; Registers for plane pointers; put at the end (and in ascending plane order)
 ; so that we can avoid reserving them when not necessary
-%define out0q   r6q
-%define  in0q   r7q
-%define out1q   r8q
-%define  in1q   r9q
-%define out2q   r10q
-%define  in2q   r11q
-%define out3q   r12q
-%define  in3q   r13q
+%define out0q   r7q
+%define  in0q   r8q
+%define out1q   r9q
+%define  in1q   r10q
+%define out2q   r11q
+%define  in2q   r12q
+%define out3q   r13q
+%define  in3q   r14q
 
 ;---------------------------------------------------------
 ; Common macros for linking together different kernels

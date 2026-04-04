@@ -58,10 +58,26 @@
     REF_PATTERN(NAME, 1, 1, 1, 0),                                              \
     REF_PATTERN(NAME, 1, 1, 1, 1)
 
+static int setup_rw(const SwsImplParams *params, SwsImplResult *out)
+{
+    const SwsOp *op = params->op;
+
+    /* 3-component reads/writes process one extra garbage word */
+    if (op->rw.packed && op->rw.elems == 3) {
+        switch (op->op) {
+        case SWS_OP_READ:  out->over_read  = sizeof(uint32_t); break;
+        case SWS_OP_WRITE: out->over_write = sizeof(uint32_t); break;
+        }
+    }
+
+    return 0;
+}
+
 #define DECL_RW(EXT, TYPE, NAME, OP, ELEMS, PACKED, FRAC)                       \
     DECL_ASM(TYPE, NAME##ELEMS##EXT,                                            \
         .op = SWS_OP_##OP,                                                      \
         .rw = { .elems = ELEMS, .packed = PACKED, .frac = FRAC },               \
+        .setup = setup_rw,                                                      \
     );
 
 #define DECL_PACKED_RW(EXT, DEPTH)                                              \
@@ -83,11 +99,11 @@
         .pack.pattern = {X, Y, Z, W},                                           \
     );                                                                          \
 
-static int setup_swap_bytes(const SwsOp *op, SwsOpPriv *out)
+static int setup_swap_bytes(const SwsImplParams *params, SwsImplResult *out)
 {
-    const int mask = ff_sws_pixel_type_size(op->type) - 1;
+    const int mask = ff_sws_pixel_type_size(params->op->type) - 1;
     for (int i = 0; i < 16; i++)
-        out->u8[i] = (i & ~mask) | (mask - (i & mask));
+        out->priv.u8[i] = (i & ~mask) | (mask - (i & mask));
     return 0;
 }
 
@@ -113,10 +129,11 @@ static int setup_swap_bytes(const SwsOp *op, SwsOpPriv *out)
         .unused[IDX] = true,                                                    \
     );
 
-static int setup_clear(const SwsOp *op, SwsOpPriv *out)
+static int setup_clear(const SwsImplParams *params, SwsImplResult *out)
 {
+    const SwsOp *op = params->op;
     for (int i = 0; i < 4; i++)
-        out->u32[i] = (uint32_t) op->c.q4[i].num;
+        out->priv.u32[i] = (uint32_t) op->clear.value[i].num;
     return 0;
 }
 
@@ -146,9 +163,9 @@ static int setup_clear(const SwsOp *op, SwsOpPriv *out)
         .convert.expand = true,                                                 \
     );
 
-static int setup_shift(const SwsOp *op, SwsOpPriv *out)
+static int setup_shift(const SwsImplParams *params, SwsImplResult *out)
 {
-    out->u16[0] = op->c.u;
+    out->priv.u16[0] = params->op->shift.amount;
     return 0;
 }
 
@@ -168,20 +185,20 @@ static int setup_shift(const SwsOp *op, SwsOpPriv *out)
 #define DECL_MIN_MAX(EXT)                                                       \
     DECL_COMMON_PATTERNS(F32, min##EXT,                                         \
         .op = SWS_OP_MIN,                                                       \
-        .setup = ff_sws_setup_q4,                                               \
+        .setup = ff_sws_setup_clamp,                                            \
         .flexible = true,                                                       \
     );                                                                          \
                                                                                 \
     DECL_COMMON_PATTERNS(F32, max##EXT,                                         \
         .op = SWS_OP_MAX,                                                       \
-        .setup = ff_sws_setup_q4,                                               \
+        .setup = ff_sws_setup_clamp,                                            \
         .flexible = true,                                                       \
     );
 
 #define DECL_SCALE(EXT)                                                         \
     DECL_COMMON_PATTERNS(F32, scale##EXT,                                       \
         .op = SWS_OP_SCALE,                                                     \
-        .setup = ff_sws_setup_q,                                                \
+        .setup = ff_sws_setup_scale,                                            \
         .flexible = true,                                                       \
     );
 
@@ -191,12 +208,13 @@ static int setup_shift(const SwsOp *op, SwsOpPriv *out)
         .scale = { .num = ((1 << (BITS)) - 1), .den = 1 },                      \
     );
 
-static int setup_dither(const SwsOp *op, SwsOpPriv *out)
+static int setup_dither(const SwsImplParams *params, SwsImplResult *out)
 {
+    const SwsOp *op = params->op;
     /* 1x1 matrix / single constant */
     if (!op->dither.size_log2) {
         const AVRational k = op->dither.matrix[0];
-        out->f32[0] = (float) k.num / k.den;
+        out->priv.f32[0] = (float) k.num / k.den;
         return 0;
     }
 
@@ -214,9 +232,10 @@ static int setup_dither(const SwsOp *op, SwsOpPriv *out)
      * typically 320 bytes for a 16x16 dither matrix. */
     const int stride = size * sizeof(float);
     const int num_rows = size + max_offset;
-    float *matrix = out->ptr = av_mallocz(num_rows * stride);
+    float *matrix = out->priv.ptr = av_mallocz(num_rows * stride);
     if (!matrix)
         return AVERROR(ENOMEM);
+    out->free = ff_op_priv_free;
 
     for (int i = 0; i < size * size; i++)
         matrix[i] = (float) op->dither.matrix[i].num / op->dither.matrix[i].den;
@@ -224,9 +243,10 @@ static int setup_dither(const SwsOp *op, SwsOpPriv *out)
     memcpy(&matrix[size * size], matrix, max_offset * stride);
 
     /* Store relative pointer offset to each row inside extra space */
-    static_assert(sizeof(out->ptr) <= sizeof(int16_t[4]), ">8 byte pointers not supported");
+    static_assert(sizeof(out->priv.ptr) <= sizeof(int16_t[4]),
+                  ">8 byte pointers not supported");
     assert(max_offset * stride <= INT16_MAX);
-    int16_t *off_out = &out->i16[4];
+    int16_t *off_out = &out->priv.i16[4];
     for (int i = 0; i < 4; i++)
         off_out[i] = off[i] >= 0 ? (off[i] & (size - 1)) * stride : -1;
 
@@ -237,15 +257,17 @@ static int setup_dither(const SwsOp *op, SwsOpPriv *out)
     DECL_MACRO(F32, dither##SIZE##EXT,                                          \
         .op    = SWS_OP_DITHER,                                                 \
         .setup = setup_dither,                                                  \
-        .free  = (SIZE) ? av_free : NULL,                                       \
         .dither_size = SIZE,                                                    \
     );
 
-static int setup_linear(const SwsOp *op, SwsOpPriv *out)
+static int setup_linear(const SwsImplParams *params, SwsImplResult *out)
 {
-    float *matrix = out->ptr = av_mallocz(sizeof(float[4][5]));
+    const SwsOp *op = params->op;
+
+    float *matrix = out->priv.ptr = av_mallocz(sizeof(float[4][5]));
     if (!matrix)
         return AVERROR(ENOMEM);
+    out->free = ff_op_priv_free;
 
     for (int y = 0; y < 4; y++) {
         for (int x = 0; x < 5; x++)
@@ -259,9 +281,254 @@ static int setup_linear(const SwsOp *op, SwsOpPriv *out)
     DECL_ASM(F32, NAME##EXT,                                                    \
         .op    = SWS_OP_LINEAR,                                                 \
         .setup = setup_linear,                                                  \
-        .free  = av_free,                                                       \
         .linear_mask = (MASK),                                                  \
     );
+
+static bool check_filter_fma(const SwsImplParams *params)
+{
+    const SwsOp *op = params->op;
+    SwsContext *ctx = params->ctx;
+    if (!(ctx->flags & SWS_BITEXACT))
+        return true;
+
+    if (!ff_sws_pixel_type_is_int(op->type))
+        return false;
+
+    /* Check if maximum/minimum partial sum fits losslessly inside float */
+    AVRational max_range = {   1 << 24,  1 };
+    AVRational min_range = { -(1 << 24), 1 };
+    const AVRational scale = Q(SWS_FILTER_SCALE);
+
+    for (int i = 0; i < op->rw.elems; i++) {
+        const AVRational min = av_mul_q(op->comps.min[i], scale);
+        const AVRational max = av_mul_q(op->comps.max[i], scale);
+        if (av_cmp_q(min, min_range) < 0 || av_cmp_q(max_range, max) < 0)
+            return false;
+    }
+
+    return true;
+}
+
+static int setup_filter_v(const SwsImplParams *params, SwsImplResult *out)
+{
+    const SwsFilterWeights *filter = params->op->rw.kernel;
+    static_assert(sizeof(out->priv.ptr) <= sizeof(int32_t[2]),
+                  ">8 byte pointers not supported");
+
+    /* Pre-convert weights to float */
+    float *weights = av_calloc(filter->num_weights, sizeof(float));
+    if (!weights)
+        return AVERROR(ENOMEM);
+
+    for (int i = 0; i < filter->num_weights; i++)
+        weights[i] = (float) filter->weights[i] / SWS_FILTER_SCALE;
+
+    out->priv.ptr = weights;
+    out->priv.uptr[1] = filter->filter_size;
+    out->free = ff_op_priv_free;
+    return 0;
+}
+
+static int hscale_sizeof_weight(const SwsOp *op)
+{
+    switch (op->type) {
+    case SWS_PIXEL_U8:  return sizeof(int16_t);
+    case SWS_PIXEL_U16: return sizeof(int16_t);
+    case SWS_PIXEL_F32: return sizeof(float);
+    default:            return 0;
+    }
+}
+
+static int setup_filter_h(const SwsImplParams *params, SwsImplResult *out)
+{
+    const SwsOp *op = params->op;
+    const SwsFilterWeights *filter = op->rw.kernel;
+
+    /**
+     * `vpgatherdd` gathers 32 bits at a time; so if we're filtering a smaller
+     * size, we need to gather 2/4 taps simultaneously and unroll the inner
+     * loop over several packed samples.
+     */
+    const int taps_align = sizeof(int32_t) / ff_sws_pixel_type_size(op->type);
+    const int filter_size = filter->filter_size;
+    const int block_size = params->table->block_size;
+    const size_t aligned_size = FFALIGN(filter_size, taps_align);
+    const size_t line_size = FFALIGN(filter->dst_size, block_size);
+    av_assert1(FFALIGN(line_size, taps_align) == line_size);
+    if (aligned_size > INT_MAX)
+        return AVERROR(EINVAL);
+
+    union {
+        void *ptr;
+        int16_t *i16;
+        float *f32;
+    } weights;
+
+    const int sizeof_weight = hscale_sizeof_weight(op);
+    weights.ptr = av_calloc(line_size, sizeof_weight * aligned_size);
+    if (!weights.ptr)
+        return AVERROR(ENOMEM);
+
+    /**
+     * Transpose filter weights to group (aligned) taps by block
+     */
+    const int mmsize = block_size * 2;
+    const int gather_size = mmsize / sizeof(int32_t); /* pixels per vpgatherdd */
+    for (size_t x = 0; x < line_size; x += block_size) {
+        const int elems = FFMIN(block_size, filter->dst_size - x);
+        for (int j = 0; j < filter_size; j++) {
+            const int jb = j & ~(taps_align - 1);
+            const int ji = j - jb;
+            const size_t idx_base = x * aligned_size + jb * block_size + ji;
+            for (int i = 0; i < elems; i++) {
+                const int w = filter->weights[(x + i) * filter_size + j];
+                size_t idx = idx_base;
+                if (op->type == SWS_PIXEL_U8) {
+                    /* Interleave the pixels within each lane, i.e.:
+                     *  [a0 a1 a2 a3 | b0 b1 b2 b3 ] pixels 0-1, taps 0-3 (lane 0)
+                     *  [e0 e1 e2 e3 | f0 f1 f2 f3 ] pixels 4-5, taps 0-3 (lane 1)
+                     *  [c0 c1 c2 c3 | d0 d1 d2 d3 ] pixels 2-3, taps 0-3 (lane 0)
+                     *  [g0 g1 g2 g3 | h0 h1 h2 h3 ] pixels 6-7, taps 0-3 (lane 1)
+                     *  [i0 i1 i2 i3 | j0 j1 j2 j3 ] pixels 8-9, taps 0-3 (lane 0)
+                     *  ...
+                     *  [o0 o1 o2 o3 | p0 p1 p2 p3 ] pixels 14-15, taps 0-3 (lane 1)
+                     *  (repeat for taps 4-7, etc.)
+                     */
+                    const int gather_base = i & ~(gather_size - 1);
+                    const int gather_pos  = i - gather_base;
+                    const int lane_idx    = gather_pos >> 2;
+                    const int pos_in_lane = gather_pos & 3;
+                    idx += gather_base * 4 /* which gather (m0 or m1) */
+                         + (pos_in_lane >> 1) * (mmsize / 2) /* lo/hi unpack */
+                         + lane_idx * 8 /* 8 ints per lane */
+                         + (pos_in_lane & 1) * 4; /* 4 taps per pair */
+                } else {
+                    idx += i * taps_align;
+                }
+
+                switch (op->type) {
+                case SWS_PIXEL_U8:  weights.i16[idx] = w; break;
+                case SWS_PIXEL_U16: weights.i16[idx] = w; break;
+                case SWS_PIXEL_F32: weights.f32[idx] = w; break;
+                }
+            }
+        }
+    }
+
+    out->priv.ptr = weights.ptr;
+    out->priv.uptr[1] = aligned_size;
+    out->free = ff_op_priv_free;
+    return 0;
+}
+
+static bool check_filter_4x4_h(const SwsImplParams *params)
+{
+    SwsContext *ctx = params->ctx;
+    const SwsOp *op = params->op;
+    if ((ctx->flags & SWS_BITEXACT) && op->type == SWS_PIXEL_F32)
+        return false; /* different accumulation order due to 4x4 transpose */
+
+    const int cpu_flags = av_get_cpu_flags();
+    if (cpu_flags & AV_CPU_FLAG_SLOW_GATHER)
+        return true; /* always prefer over gathers if gathers are slow */
+
+    /**
+     * Otherwise, prefer it above a certain filter size. Empirically, this
+     * kernel seems to be faster whenever the reference/gather kernel crosses
+     * a breakpoint for the number of gathers needed, but this filter doesn't.
+     *
+     * Tested on a Lunar Lake (Intel Core Ultra 7 258V) system.
+     */
+    const SwsFilterWeights *filter = op->rw.kernel;
+    return op->type == SWS_PIXEL_U8  && filter->filter_size > 12 ||
+           op->type == SWS_PIXEL_U16 && filter->filter_size > 4  ||
+           op->type == SWS_PIXEL_F32 && filter->filter_size > 1;
+}
+
+static int setup_filter_4x4_h(const SwsImplParams *params, SwsImplResult *out)
+{
+    const SwsOp *op = params->op;
+    const SwsFilterWeights *filter = op->rw.kernel;
+    const int sizeof_weights = hscale_sizeof_weight(op);
+    const int block_size = params->table->block_size;
+    const int taps_align = 16 / sizeof_weights; /* taps per iteration (XMM) */
+    const int pixels_align = 4; /* pixels per iteration */
+    const int filter_size = filter->filter_size;
+    const size_t aligned_size = FFALIGN(filter_size, taps_align);
+    const int line_size = FFALIGN(filter->dst_size, block_size);
+    av_assert1(FFALIGN(line_size, pixels_align) == line_size);
+
+    union {
+        void *ptr;
+        int16_t *i16;
+        float *f32;
+    } weights;
+
+    weights.ptr = av_calloc(line_size, aligned_size * sizeof_weights);
+    if (!weights.ptr)
+        return AVERROR(ENOMEM);
+
+    /**
+     * Desired memory layout: [w][taps][pixels_align][taps_align]
+     *
+     * Example with taps_align=8, pixels_align=4:
+     *   [a0, a1, ... a7]  weights for pixel 0, taps 0..7
+     *   [b0, b1, ... b7]  weights for pixel 1, taps 0..7
+     *   [c0, c1, ... c7]  weights for pixel 2, taps 0..7
+     *   [d0, d1, ... d7]  weights for pixel 3, taps 0..7
+     *   [a8, a9, ... a15] weights for pixel 0, taps 8..15
+     *   ...
+     *   repeat for all taps, then move on to pixels 4..7, etc.
+     */
+    for (int x = 0; x < filter->dst_size; x++) {
+        for (int j = 0; j < filter_size; j++) {
+            const int xb = x & ~(pixels_align - 1);
+            const int jb = j & ~(taps_align - 1);
+            const int xi = x - xb, ji = j - jb;
+            const int w = filter->weights[x * filter_size + j];
+            const int idx = xb * aligned_size + jb * pixels_align + xi * taps_align + ji;
+
+            switch (op->type) {
+            case SWS_PIXEL_U8:  weights.i16[idx] = w; break;
+            case SWS_PIXEL_U16: weights.i16[idx] = w; break;
+            case SWS_PIXEL_F32: weights.f32[idx] = w; break;
+            }
+        }
+    }
+
+    out->priv.ptr = weights.ptr;
+    out->priv.uptr[1] = aligned_size * sizeof_weights;
+    out->free = ff_op_priv_free;
+    return 0;
+}
+
+#define DECL_FILTER(EXT, TYPE, DIR, NAME, ELEMS, ...)                           \
+    DECL_ASM(TYPE, NAME##ELEMS##_##TYPE##EXT,                                   \
+        .op = SWS_OP_READ,                                                      \
+        .rw.elems = ELEMS,                                                      \
+        .rw.filter = SWS_OP_FILTER_##DIR,                                       \
+        __VA_ARGS__                                                             \
+    );
+
+#define DECL_FILTERS(EXT, TYPE, DIR, NAME, ...)                                 \
+    DECL_FILTER(EXT, TYPE, DIR, NAME, 1, __VA_ARGS__)                           \
+    DECL_FILTER(EXT, TYPE, DIR, NAME, 2, __VA_ARGS__)                           \
+    DECL_FILTER(EXT, TYPE, DIR, NAME, 3, __VA_ARGS__)                           \
+    DECL_FILTER(EXT, TYPE, DIR, NAME, 4, __VA_ARGS__)
+
+#define DECL_FILTERS_GENERIC(EXT, TYPE)                                         \
+    DECL_FILTERS(EXT, TYPE, V, filter_v,     .setup = setup_filter_v)           \
+    DECL_FILTERS(EXT, TYPE, V, filter_fma_v, .setup = setup_filter_v,           \
+                 .check = check_filter_fma)                                     \
+    DECL_FILTERS(EXT, TYPE, H, filter_h,     .setup = setup_filter_h)           \
+    DECL_FILTERS(EXT, TYPE, H, filter_4x4_h, .setup = setup_filter_4x4_h,       \
+                 .check = check_filter_4x4_h)
+
+#define REF_FILTERS(NAME, SUFFIX)                                               \
+    &op_##NAME##1##SUFFIX,                                                      \
+    &op_##NAME##2##SUFFIX,                                                      \
+    &op_##NAME##3##SUFFIX,                                                      \
+    &op_##NAME##4##SUFFIX
 
 #define DECL_FUNCS_8(SIZE, EXT, FLAG)                                           \
     DECL_RW(EXT, U8, read_planar,   READ,  1, false, 0)                         \
@@ -477,6 +744,9 @@ static const SwsOpTable ops16##EXT = {                                          
     DECL_LINEAR(EXT, affine3a,  SWS_MASK_MAT3 | SWS_MASK_OFF3 | SWS_MASK_ALPHA) \
     DECL_LINEAR(EXT, matrix4,   SWS_MASK_MAT4)                                  \
     DECL_LINEAR(EXT, affine4,   SWS_MASK_MAT4 | SWS_MASK_OFF4)                  \
+    DECL_FILTERS_GENERIC(EXT,  U8)                                              \
+    DECL_FILTERS_GENERIC(EXT, U16)                                              \
+    DECL_FILTERS_GENERIC(EXT, F32)                                              \
                                                                                 \
 static const SwsOpTable ops32##EXT = {                                          \
     .cpu_flags = AV_CPU_FLAG_##FLAG,                                            \
@@ -528,6 +798,18 @@ static const SwsOpTable ops32##EXT = {                                          
         &op_affine3a##EXT,                                                      \
         &op_matrix4##EXT,                                                       \
         &op_affine4##EXT,                                                       \
+        REF_FILTERS(filter_fma_v, _U8##EXT),                                    \
+        REF_FILTERS(filter_fma_v, _U16##EXT),                                   \
+        REF_FILTERS(filter_fma_v, _F32##EXT),                                   \
+        REF_FILTERS(filter_4x4_h, _U8##EXT),                                    \
+        REF_FILTERS(filter_4x4_h, _U16##EXT),                                   \
+        REF_FILTERS(filter_4x4_h, _F32##EXT),                                   \
+        REF_FILTERS(filter_v, _U8##EXT),                                        \
+        REF_FILTERS(filter_v, _U16##EXT),                                       \
+        REF_FILTERS(filter_v, _F32##EXT),                                       \
+        REF_FILTERS(filter_h, _U8##EXT),                                        \
+        REF_FILTERS(filter_h, _U16##EXT),                                       \
+        REF_FILTERS(filter_h, _F32##EXT),                                       \
         NULL                                                                    \
     },                                                                          \
 };
@@ -573,7 +855,7 @@ static bool op_is_type_invariant(const SwsOp *op)
     switch (op->op) {
     case SWS_OP_READ:
     case SWS_OP_WRITE:
-        return !(op->rw.elems > 1 && op->rw.packed) && !op->rw.frac;
+        return !(op->rw.elems > 1 && op->rw.packed) && !op->rw.frac && !op->rw.filter;
     case SWS_OP_SWIZZLE:
     case SWS_OP_CLEAR:
         return true;
@@ -634,9 +916,11 @@ do {                                                                            
     ASSIGN_SHUFFLE_FUNC(10, 15, sse4);
     ASSIGN_SHUFFLE_FUNC( 8, 16, sse4);
     ASSIGN_SHUFFLE_FUNC( 4, 12, sse4);
+    ASSIGN_SHUFFLE_FUNC(15,  5, sse4);
     ASSIGN_SHUFFLE_FUNC(15, 15, sse4);
     ASSIGN_SHUFFLE_FUNC(12, 16, sse4);
     ASSIGN_SHUFFLE_FUNC( 6, 12, sse4);
+    ASSIGN_SHUFFLE_FUNC(16,  4, sse4);
     ASSIGN_SHUFFLE_FUNC(16, 12, sse4);
     ASSIGN_SHUFFLE_FUNC(16, 16, sse4);
     ASSIGN_SHUFFLE_FUNC( 8, 12, sse4);
@@ -651,38 +935,35 @@ do {                                                                            
 static void normalize_clear(SwsOp *op)
 {
     static_assert(sizeof(uint32_t) == sizeof(int), "int size mismatch");
-    SwsOpPriv priv;
+    SwsImplResult res;
     union {
         uint32_t u32;
         int i;
     } c;
 
-    ff_sws_setup_q4(op, &priv);
+    ff_sws_setup_clear(&(const SwsImplParams) { .op = op }, &res);
+
     for (int i = 0; i < 4; i++) {
-        if (!op->c.q4[i].den)
+        if (!op->clear.value[i].den)
             continue;
         switch (ff_sws_pixel_type_size(op->type)) {
-        case 1: c.u32 = 0x1010101U * priv.u8[i]; break;
-        case 2: c.u32 = (uint32_t)priv.u16[i] << 16 | priv.u16[i]; break;
-        case 4: c.u32 = priv.u32[i]; break;
+        case 1: c.u32 = 0x1010101U * res.priv.u8[i]; break;
+        case 2: c.u32 = (uint32_t) res.priv.u16[i] << 16 | res.priv.u16[i]; break;
+        case 4: c.u32 = res.priv.u32[i]; break;
         }
 
-        op->c.q4[i].num = c.i;
-        op->c.q4[i].den = 1;
+        op->clear.value[i].num = c.i;
+        op->clear.value[i].den = 1;
     }
 }
 
 static int compile(SwsContext *ctx, SwsOpList *ops, SwsCompiledOp *out)
 {
+    int ret;
     const int cpu_flags = av_get_cpu_flags();
     const int mmsize = get_mmsize(cpu_flags);
     if (mmsize < 0)
         return mmsize;
-
-    const SwsOp *read  = ff_sws_op_list_input(ops);
-    const SwsOp *write = ff_sws_op_list_output(ops);
-    av_assert1(write);
-    int ret;
 
     /* Special fast path for in-place packed shuffle */
     ret = solve_shuffle(ops, mmsize, out);
@@ -702,18 +983,9 @@ static int compile(SwsContext *ctx, SwsOpList *ops, SwsCompiledOp *out)
         .block_size = 2 * FFMIN(mmsize, 32) / ff_sws_op_list_max_size(ops),
     };
 
-    /* 3-component reads/writes process one extra garbage word */
-    if (read && read->rw.packed && read->rw.elems == 3)
-        out->over_read = sizeof(uint32_t);
-    if (write->rw.packed && write->rw.elems == 3)
-        out->over_write = sizeof(uint32_t);
-
-
-    /* Make on-stack copy of `ops` to iterate over */
-    SwsOpList rest = *ops;
-    do {
+    for (int i = 0; i < ops->num_ops; i++) {
         int op_block_size = out->block_size;
-        SwsOp *op = &rest.ops[0];
+        SwsOp *op = &ops->ops[i];
 
         if (op_is_type_invariant(op)) {
             if (op->op == SWS_OP_CLEAR)
@@ -722,17 +994,13 @@ static int compile(SwsContext *ctx, SwsOpList *ops, SwsCompiledOp *out)
             op->type = SWS_PIXEL_U8;
         }
 
-        ret = ff_sws_op_compile_tables(tables, FF_ARRAY_ELEMS(tables), &rest,
-                                       op_block_size, chain);
-    } while (ret == AVERROR(EAGAIN));
-
-    if (ret < 0) {
-        ff_sws_op_chain_free(chain);
-        if (rest.num_ops < ops->num_ops) {
-            av_log(ctx, AV_LOG_TRACE, "Uncompiled remainder:\n");
-            ff_sws_op_list_print(ctx, AV_LOG_TRACE, AV_LOG_TRACE, &rest);
+        ret = ff_sws_op_compile_tables(ctx, tables, FF_ARRAY_ELEMS(tables),
+                                       ops, i, op_block_size, chain);
+        if (ret < 0) {
+            av_log(ctx, AV_LOG_TRACE, "Failed to compile op %d\n", i);
+            ff_sws_op_chain_free(chain);
+            return ret;
         }
-        return ret;
     }
 
 #define ASSIGN_PROCESS_FUNC(NAME)                               \
@@ -744,6 +1012,8 @@ static int compile(SwsContext *ctx, SwsOpList *ops, SwsCompiledOp *out)
         out->func = NAME;                                       \
     } while (0)
 
+    const SwsOp *read      = ff_sws_op_list_input(ops);
+    const SwsOp *write     = ff_sws_op_list_output(ops);
     const int read_planes  = read ? (read->rw.packed ? 1 : read->rw.elems) : 0;
     const int write_planes = write->rw.packed ? 1 : write->rw.elems;
     switch (FFMAX(read_planes, write_planes)) {
@@ -758,7 +1028,9 @@ static int compile(SwsContext *ctx, SwsOpList *ops, SwsCompiledOp *out)
         return ret;
     }
 
-    out->cpu_flags = chain->cpu_flags;
+    out->cpu_flags  = chain->cpu_flags;
+    out->over_read  = chain->over_read;
+    out->over_write = chain->over_write;
     return 0;
 }
 

@@ -7743,6 +7743,11 @@ The file path of the downloaded whisper.cpp model (mandatory).
 The language to use for transcription ('auto' for auto-detect).
 Default value: @code{"auto"}
 
+@item translate
+If enabled, translate the transcription from the source language to English. A
+multilingual model is required to enable this option.
+Default value: @code{"false"}
+
 @item queue
 The maximum size that will be queued into the filter before processing the audio
 with whisper. Using a small value the audio stream will be processed more often,
@@ -7775,8 +7780,8 @@ Default value: @code{"text"}
 
 @item max_len
 Maximum segment length in characters. When set to a value greater than 0,
-transcription segments will be split to not exceed this length. This is useful
-for generating subtitles with shorter lines.
+transcription segments will be split by word to not exceed this length. This is
+useful for generating subtitles with shorter lines.
 Default value: @code{"0"}
 
 @item vad_model
@@ -25648,6 +25653,22 @@ Work the same as the identical @ref{scale} filter options.
 @item reset_sar
 Works the same as the identical @ref{scale} filter option.
 
+@item in_color_range
+Override input color range.
+
+@item out_color_range
+Specify output color range.
+
+The accepted values for in_trc and out_trc are:
+@table @samp
+@item studio
+Studio (or restricted, or MPEG) color range.
+
+@item full
+Full (or JPEG) color range.
+
+@end table
+
 @anchor{color_profile}
 @item color_profile
 Specify all color properties at once.
@@ -25665,10 +25686,13 @@ BT.2020
 
 @end table
 
-@item trc
+@item in_trc
+Override input transfer characteristics.
+
+@item out_trc
 Specify output transfer characteristics.
 
-The accepted values are:
+The accepted values for in_trc and out_trc are:
 @table @samp
 @item bt709
 BT.709
@@ -25720,10 +25744,13 @@ ARIB_STD_B67
 
 @end table
 
-@item primaries
+@item in_primaries
+Override input color primaries.
+
+@item out_primaries
 Specify output color primaries.
 
-The accepted values are:
+The accepted values for in_primaries and out_primaries are:
 @table @samp
 @item bt709
 BT.709
@@ -25774,6 +25801,13 @@ vpp_amf=-2:720:format=yuv420p
 Upscale to 4K and change color profile to bt2020.
 @example
 vpp_amf=4096:2160:color_profile=bt2020
+@end example
+
+@item
+Override input primaries and input transfer characteristics, change both to bt709.
+
+@example
+vpp_amf=color_profile=bt2020:in_trc=smpte2084:in_primaries=bt2020:out_trc=bt709:out_primaries=bt709
 @end example
 @end itemize
 

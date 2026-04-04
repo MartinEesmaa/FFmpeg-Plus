@@ -38,6 +38,7 @@
 #include "avc.h"
 #include "evc.h"
 #include "apv.h"
+#include "lcevc.h"
 #include "libavcodec/ac3_parser_internal.h"
 #include "libavcodec/dnxhddata.h"
 #include "libavcodec/flac.h"
@@ -1695,6 +1696,19 @@ static int mov_write_evcc_tag(AVIOContext *pb, MOVTrack *track)
     return update_size(pb, pos);
 }
 
+static int mov_write_lvcc_tag(AVIOContext *pb, MOVTrack *track)
+{
+    int64_t pos = avio_tell(pb);
+
+    avio_wb32(pb, 0);
+    ffio_wfourcc(pb, "lvcC");
+
+    ff_isom_write_lvcc(pb, track->extradata[track->last_stsd_index],
+                       track->extradata_size[track->last_stsd_index]);
+
+    return update_size(pb, pos);
+}
+
 static int mov_write_vvcc_tag(AVIOContext *pb, MOVTrack *track)
 {
     int64_t pos = avio_tell(pb);
@@ -2894,6 +2908,8 @@ static int mov_write_video_tag(AVFormatContext *s, AVIOContext *pb, MOVMuxContex
     }
     else if (track->par->codec_id ==AV_CODEC_ID_EVC) {
         mov_write_evcc_tag(pb, track);
+    } else if (track->par->codec_id == AV_CODEC_ID_LCEVC) {
+        mov_write_lvcc_tag(pb, track);
     } else if (track->par->codec_id ==AV_CODEC_ID_APV) {
         mov_write_apvc_tag(mov->fc, pb, track);
     } else if (track->par->codec_id == AV_CODEC_ID_VP9) {
@@ -3833,13 +3849,13 @@ static int mov_write_minf_tag(AVFormatContext *s, AVIOContext *pb, MOVMuxContext
 }
 
 static void get_pts_range(MOVMuxContext *mov, MOVTrack *track,
-                          int64_t *start, int64_t *end)
+                          int64_t *start, int64_t *end, int elst)
 {
     if (track->tag == MKTAG('t','m','c','d') && mov->nb_meta_tmcd) {
         // tmcd tracks gets track_duration set in mov_write_moov_tag from
         // another track's duration, while the end_pts may be left at zero.
         // Calculate the pts duration for that track instead.
-        get_pts_range(mov, &mov->tracks[track->src_track], start, end);
+        get_pts_range(mov, &mov->tracks[track->src_track], start, end, elst);
         *start = av_rescale(*start, track->timescale,
                             mov->tracks[track->src_track].timescale);
         *end   = av_rescale(*end, track->timescale,
@@ -3850,7 +3866,7 @@ static void get_pts_range(MOVMuxContext *mov, MOVTrack *track,
         track->start_dts != AV_NOPTS_VALUE &&
         track->start_cts != AV_NOPTS_VALUE) {
         *start = track->start_dts + track->start_cts;
-        *end   = track->end_pts;
+        *end   = elst ? track->elst_end_pts : track->end_pts;
         return;
     }
     *start = 0;
@@ -3860,7 +3876,7 @@ static void get_pts_range(MOVMuxContext *mov, MOVTrack *track,
 static int64_t calc_samples_pts_duration(MOVMuxContext *mov, MOVTrack *track)
 {
     int64_t start, end;
-    get_pts_range(mov, track, &start, &end);
+    get_pts_range(mov, track, &start, &end, 0);
     return end - start;
 }
 
@@ -3872,9 +3888,16 @@ static int64_t calc_samples_pts_duration(MOVMuxContext *mov, MOVTrack *track)
 static int64_t calc_pts_duration(MOVMuxContext *mov, MOVTrack *track)
 {
     int64_t start, end;
-    get_pts_range(mov, track, &start, &end);
+    get_pts_range(mov, track, &start, &end, 0);
     if (mov->use_editlist != 0)
         start = 0;
+    return end - start;
+}
+
+static int64_t calc_elst_duration(MOVMuxContext *mov, MOVTrack *track)
+{
+    int64_t start, end;
+    get_pts_range(mov, track, &start, &end, 1);
     return end - start;
 }
 
@@ -4103,7 +4126,7 @@ static int mov_write_tapt_tag(AVIOContext *pb, MOVTrack *track)
 static int mov_write_edts_tag(AVIOContext *pb, MOVMuxContext *mov,
                               MOVTrack *track)
 {
-    int64_t duration = av_rescale_rnd(calc_samples_pts_duration(mov, track),
+    int64_t duration = av_rescale_rnd(calc_elst_duration(mov, track),
                                       mov->movie_timescale, track->timescale,
                                       AV_ROUND_UP);
     int version = duration < INT32_MAX ? 0 : 1;
@@ -5234,6 +5257,9 @@ static int mov_write_moov_tag(AVIOContext *pb, MOVMuxContext *mov,
         MOVTrack *track = &mov->tracks[i];
         if (track->tag == MKTAG('r','t','p',' ')) {
             track->tref_tag = MKTAG('h','i','n','t');
+            track->tref_id = mov->tracks[track->src_track].track_id;
+        } else if (track->tag == MKTAG('l','v','c','1')) {
+            track->tref_tag = MKTAG('s','b','a','s');
             track->tref_id = mov->tracks[track->src_track].track_id;
         } else if (track->par->codec_type == AVMEDIA_TYPE_AUDIO) {
             const AVPacketSideData *sd = av_packet_side_data_get(track->st->codecpar->coded_side_data,
@@ -6543,6 +6569,8 @@ static int mov_flush_fragment(AVFormatContext *s, int force)
                     track->end_pts = pts;
                 else
                     track->end_pts = dts;
+                if (!(pkt->flags & AV_PKT_FLAG_DISCARD))
+                    track->elst_end_pts = track->end_pts;
             }
         }
     }
@@ -6860,6 +6888,7 @@ int ff_mov_write_packet(AVFormatContext *s, AVPacket *pkt)
          par->codec_id == AV_CODEC_ID_VVC ||
          par->codec_id == AV_CODEC_ID_VP9 ||
          par->codec_id == AV_CODEC_ID_EVC ||
+         par->codec_id == AV_CODEC_ID_LCEVC ||
          par->codec_id == AV_CODEC_ID_TRUEHD) && !trk->extradata_size[0] &&
          !TAG_IS_AVCI(trk->tag)) {
         /* copy frame to create needed atoms */
@@ -6969,6 +6998,25 @@ int ff_mov_write_packet(AVFormatContext *s, AVPacket *pkt)
             avio_write(pb, reformatted_data, size);
         } else {
             size = ff_vvc_annexb2mp4(pb, pkt->data, pkt->size, 0, NULL);
+        }
+    } else if (par->codec_id == AV_CODEC_ID_LCEVC && trk->extradata_size[trk->last_stsd_index] > 0 &&
+              *(uint8_t *)trk->extradata[trk->last_stsd_index] != 1) {
+        /* extradata is Annex B, assume the bitstream is too and convert it */
+        if (trk->hint_track >= 0 && trk->hint_track < mov->nb_tracks) {
+            ret = ff_nal_parse_units_buf(pkt->data, &reformatted_data, &size);
+            if (ret < 0)
+                return ret;
+            avio_write(pb, reformatted_data, size);
+        } else {
+            if (trk->cenc.aes_ctr) {
+                size = ff_mov_cenc_avc_parse_nal_units(&trk->cenc, pb, pkt->data, size);
+                if (size < 0) {
+                    ret = size;
+                    goto err;
+                }
+            } else {
+                size = ff_nal_parse_units(pb, pkt->data, pkt->size);
+            }
         }
     } else if (par->codec_id == AV_CODEC_ID_AV1 && !trk->cenc.aes_ctr) {
         if (trk->hint_track >= 0 && trk->hint_track < mov->nb_tracks) {
@@ -7086,7 +7134,7 @@ int ff_mov_write_packet(AVFormatContext *s, AVPacket *pkt)
             /* New fragment, but discontinuous from previous fragments.
              * Pretend the duration sum of the earlier fragments is
              * pkt->dts - trk->start_dts. */
-            trk->end_pts = AV_NOPTS_VALUE;
+            trk->end_pts = trk->elst_end_pts = AV_NOPTS_VALUE;
             trk->frag_discont = 0;
         }
     }
@@ -7141,6 +7189,8 @@ int ff_mov_write_packet(AVFormatContext *s, AVPacket *pkt)
         trk->end_pts = FFMAX(trk->end_pts, trk->cluster[trk->entry].dts +
                                            trk->cluster[trk->entry].cts +
                                            pkt->duration);
+    if (!(pkt->flags & AV_PKT_FLAG_DISCARD))
+        trk->elst_end_pts = trk->end_pts;
 
     if (par->codec_id == AV_CODEC_ID_VC1) {
         mov_parse_vc1_frame(pkt, trk);
@@ -7266,6 +7316,8 @@ static int mov_write_single_packet(AVFormatContext *s, AVPacket *pkt)
                     trk->end_pts = pkt->pts;
                 else
                     trk->end_pts = pkt->dts;
+                if (!(pkt->flags & AV_PKT_FLAG_DISCARD))
+                    trk->elst_end_pts = trk->end_pts;
                 trk->end_reliable = 1;
             }
             mov_auto_flush_fragment(s, 0);
@@ -8055,10 +8107,25 @@ static int mov_init(AVFormatContext *s)
         s->streams[0]->disposition |= AV_DISPOSITION_DEFAULT;
     }
 
-#if CONFIG_IAMFENC
     for (i = 0; i < s->nb_stream_groups; i++) {
         AVStreamGroup *stg = s->stream_groups[i];
 
+        if (stg->type == AV_STREAM_GROUP_PARAMS_LCEVC) {
+            if (stg->nb_streams != 2) {
+                av_log(s, AV_LOG_ERROR, "Exactly two Streams are supported for Stream Groups of type LCEVC\n");
+                return AVERROR(EINVAL);
+            }
+            AVStreamGroupLCEVC *lcevc = stg->params.lcevc;
+            if (lcevc->lcevc_index > 1)
+                return AVERROR(EINVAL);
+            AVStream *st = stg->streams[lcevc->lcevc_index];
+            if (st->codecpar->codec_id != AV_CODEC_ID_LCEVC) {
+                av_log(s, AV_LOG_ERROR, "Stream #%u is not an LCEVC stream\n", lcevc->lcevc_index);
+                return AVERROR(EINVAL);
+            }
+        }
+
+#if CONFIG_IAMFENC
         if (stg->type != AV_STREAM_GROUP_PARAMS_IAMF_AUDIO_ELEMENT)
             continue;
 
@@ -8076,8 +8143,8 @@ static int mov_init(AVFormatContext *s)
 
         if (!mov->nb_tracks) // We support one track for the entire IAMF structure
             mov->nb_tracks++;
-    }
 #endif
+    }
 
     for (i = 0; i < s->nb_streams; i++) {
         AVStream *st = s->streams[i];
@@ -8407,6 +8474,29 @@ static int mov_init(AVFormatContext *s)
             if (ret)
                 return ret;
         }
+    }
+
+    for (i = 0; i < s->nb_stream_groups; i++) {
+        AVStreamGroup *stg = s->stream_groups[i];
+
+        if (stg->type != AV_STREAM_GROUP_PARAMS_LCEVC)
+            continue;
+
+        AVStreamGroupLCEVC *lcevc = stg->params.lcevc;
+        AVStream *st    = stg->streams[lcevc->lcevc_index];
+        MOVTrack *track = st->priv_data;
+
+        for (int j = 0; j < mov->nb_tracks; j++) {
+            MOVTrack *trk = &mov->tracks[j];
+
+            if (trk->st == stg->streams[!lcevc->lcevc_index]) {
+                track->src_track = j;
+                break;
+            }
+        }
+
+        track->par->width = lcevc->width;
+        track->par->height = track->height = lcevc->height;
     }
 
     enable_tracks(s);
@@ -8923,6 +9013,7 @@ static const AVCodecTag codec_mp4_tags[] = {
     { AV_CODEC_ID_VVC,             MKTAG('v', 'v', 'c', '1') },
     { AV_CODEC_ID_VVC,             MKTAG('v', 'v', 'i', '1') },
     { AV_CODEC_ID_EVC,             MKTAG('e', 'v', 'c', '1') },
+    { AV_CODEC_ID_LCEVC,           MKTAG('l', 'v', 'c', '1') },
     { AV_CODEC_ID_APV,             MKTAG('a', 'p', 'v', '1') },
     { AV_CODEC_ID_MPEG2VIDEO,      MKTAG('m', 'p', '4', 'v') },
     { AV_CODEC_ID_MPEG1VIDEO,      MKTAG('m', 'p', '4', 'v') },

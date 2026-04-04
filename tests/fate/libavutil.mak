@@ -70,6 +70,10 @@ fate-des: libavutil/tests/des$(EXESUF)
 fate-des: CMD = run libavutil/tests/des$(EXESUF)
 fate-des: CMP = null
 
+FATE_LIBAVUTIL += fate-detection_bbox
+fate-detection_bbox: libavutil/tests/detection_bbox$(EXESUF)
+fate-detection_bbox: CMD = run libavutil/tests/detection_bbox$(EXESUF)
+
 FATE_LIBAVUTIL += fate-dict
 fate-dict: libavutil/tests/dict$(EXESUF)
 fate-dict: CMD = run libavutil/tests/dict$(EXESUF)
@@ -86,6 +90,10 @@ fate-eval: CMD = run libavutil/tests/eval$(EXESUF)
 FATE_LIBAVUTIL += fate-fifo
 fate-fifo: libavutil/tests/fifo$(EXESUF)
 fate-fifo: CMD = run libavutil/tests/fifo$(EXESUF)
+
+FATE_LIBAVUTIL += fate-film_grain_params
+fate-film_grain_params: libavutil/tests/film_grain_params$(EXESUF)
+fate-film_grain_params: CMD = run libavutil/tests/film_grain_params$(EXESUF)
 
 FATE_LIBAVUTIL += fate-hash
 fate-hash: libavutil/tests/hash$(EXESUF)
@@ -152,6 +160,14 @@ FATE_LIBAVUTIL += fate-side_data_array
 fate-side_data_array: libavutil/tests/side_data_array$(EXESUF)
 fate-side_data_array: CMD = run libavutil/tests/side_data_array$(EXESUF)
 
+FATE_LIBAVUTIL += fate-spherical
+fate-spherical: libavutil/tests/spherical$(EXESUF)
+fate-spherical: CMD = run libavutil/tests/spherical$(EXESUF)
+
+FATE_LIBAVUTIL += fate-stereo3d
+fate-stereo3d: libavutil/tests/stereo3d$(EXESUF)
+fate-stereo3d: CMD = run libavutil/tests/stereo3d$(EXESUF)
+
 FATE_LIBAVUTIL += fate-tree
 fate-tree: libavutil/tests/tree$(EXESUF)
 fate-tree: CMD = run libavutil/tests/tree$(EXESUF)
@@ -178,6 +194,15 @@ FATE_LIBAVUTIL += fate-uuid
 fate-uuid: libavutil/tests/uuid$(EXESUF)
 fate-uuid: CMD = run libavutil/tests/uuid$(EXESUF)
 fate-uuid: CMP = null
+
+FATE_LIBAVUTIL += fate-video_enc_params
+fate-video_enc_params: libavutil/tests/video_enc_params$(EXESUF)
+fate-video_enc_params: CMD = run libavutil/tests/video_enc_params$(EXESUF)
+
+FATE_LIBAVUTIL += fate-file
+fate-file: libavutil/tests/file$(EXESUF)
+fate-file: CMD = run libavutil/tests/file$(EXESUF) $(SRC_PATH)/libavutil/tests/file.c
+fate-file: CMP = null
 
 FATE_LIBAVUTIL += $(FATE_LIBAVUTIL-yes)
 FATE-$(CONFIG_AVUTIL) += $(FATE_LIBAVUTIL)

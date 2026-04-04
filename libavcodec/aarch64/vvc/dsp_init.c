@@ -43,6 +43,36 @@ void ff_vvc_put_luma_h16_12_neon(int16_t *dst, const uint8_t *_src, const ptrdif
 void ff_vvc_put_luma_h_x16_12_neon(int16_t *dst, const uint8_t *_src, const ptrdiff_t _src_stride,
                                    const int height, const int8_t *hf, const int8_t *vf, const int width);
 
+void ff_vvc_put_chroma_h8_10_neon(int16_t *dst, const uint8_t *_src, const ptrdiff_t _src_stride,
+                                  const int height, const int8_t *hf, const int8_t *vf, const int width);
+void ff_vvc_put_chroma_h16_10_neon(int16_t *dst, const uint8_t *_src, const ptrdiff_t _src_stride,
+                                   const int height, const int8_t *hf, const int8_t *vf, const int width);
+void ff_vvc_put_chroma_h_x16_10_neon(int16_t *dst, const uint8_t *_src, const ptrdiff_t _src_stride,
+                                     const int height, const int8_t *hf, const int8_t *vf, const int width);
+void ff_vvc_put_chroma_h8_12_neon(int16_t *dst, const uint8_t *_src, const ptrdiff_t _src_stride,
+                                  const int height, const int8_t *hf, const int8_t *vf, const int width);
+void ff_vvc_put_chroma_h16_12_neon(int16_t *dst, const uint8_t *_src, const ptrdiff_t _src_stride,
+                                   const int height, const int8_t *hf, const int8_t *vf, const int width);
+void ff_vvc_put_chroma_h_x16_12_neon(int16_t *dst, const uint8_t *_src, const ptrdiff_t _src_stride,
+                                     const int height, const int8_t *hf, const int8_t *vf, const int width);
+
+void ff_vvc_put_chroma_v4_10_neon(int16_t *dst, const uint8_t *_src, const ptrdiff_t _src_stride,
+                                  const int height, const int8_t *hf, const int8_t *vf, const int width);
+void ff_vvc_put_chroma_v8_10_neon(int16_t *dst, const uint8_t *_src, const ptrdiff_t _src_stride,
+                                  const int height, const int8_t *hf, const int8_t *vf, const int width);
+void ff_vvc_put_chroma_v16_10_neon(int16_t *dst, const uint8_t *_src, const ptrdiff_t _src_stride,
+                                   const int height, const int8_t *hf, const int8_t *vf, const int width);
+void ff_vvc_put_chroma_v_x16_10_neon(int16_t *dst, const uint8_t *_src, const ptrdiff_t _src_stride,
+                                     const int height, const int8_t *hf, const int8_t *vf, const int width);
+void ff_vvc_put_chroma_v4_12_neon(int16_t *dst, const uint8_t *_src, const ptrdiff_t _src_stride,
+                                  const int height, const int8_t *hf, const int8_t *vf, const int width);
+void ff_vvc_put_chroma_v8_12_neon(int16_t *dst, const uint8_t *_src, const ptrdiff_t _src_stride,
+                                  const int height, const int8_t *hf, const int8_t *vf, const int width);
+void ff_vvc_put_chroma_v16_12_neon(int16_t *dst, const uint8_t *_src, const ptrdiff_t _src_stride,
+                                   const int height, const int8_t *hf, const int8_t *vf, const int width);
+void ff_vvc_put_chroma_v_x16_12_neon(int16_t *dst, const uint8_t *_src, const ptrdiff_t _src_stride,
+                                     const int height, const int8_t *hf, const int8_t *vf, const int width);
+
 void ff_vvc_put_luma_v4_10_neon(int16_t *dst, const uint8_t *_src, const ptrdiff_t _src_stride,
                                 const int height, const int8_t *hf, const int8_t *vf, const int width);
 void ff_vvc_put_luma_v8_10_neon(int16_t *dst, const uint8_t *_src, const ptrdiff_t _src_stride,
@@ -290,11 +320,25 @@ void ff_vvc_dsp_init_aarch64(VVCDSPContext *const c, const int bd)
         c->inter.dmvr[0][1] = ff_vvc_dmvr_h_10_neon;
         c->inter.dmvr[1][1] = ff_vvc_dmvr_hv_10_neon;
         c->inter.apply_bdof = ff_vvc_apply_bdof_10_neon;
+
+        c->inter.put[1][2][0][1] = ff_vvc_put_chroma_h8_10_neon;
+        c->inter.put[1][3][0][1] = ff_vvc_put_chroma_h16_10_neon;
+        c->inter.put[1][4][0][1] =
+        c->inter.put[1][5][0][1] =
+        c->inter.put[1][6][0][1] = ff_vvc_put_chroma_h_x16_10_neon;
+
         c->inter.put[0][2][0][1] = ff_vvc_put_luma_h8_10_neon;
         c->inter.put[0][3][0][1] = ff_vvc_put_luma_h16_10_neon;
         c->inter.put[0][4][0][1] =
         c->inter.put[0][5][0][1] =
         c->inter.put[0][6][0][1] = ff_vvc_put_luma_h_x16_10_neon;
+
+        c->inter.put[1][1][1][0] = ff_vvc_put_chroma_v4_10_neon;
+        c->inter.put[1][2][1][0] = ff_vvc_put_chroma_v8_10_neon;
+        c->inter.put[1][3][1][0] = ff_vvc_put_chroma_v16_10_neon;
+        c->inter.put[1][4][1][0] =
+        c->inter.put[1][5][1][0] =
+        c->inter.put[1][6][1][0] = ff_vvc_put_chroma_v_x16_10_neon;
 
         c->inter.put[0][1][1][0] = ff_vvc_put_luma_v4_10_neon;
         c->inter.put[0][2][1][0] = ff_vvc_put_luma_v8_10_neon;
@@ -322,6 +366,13 @@ void ff_vvc_dsp_init_aarch64(VVCDSPContext *const c, const int bd)
         c->inter.dmvr[0][1] = ff_vvc_dmvr_h_12_neon;
         c->inter.dmvr[1][1] = ff_vvc_dmvr_hv_12_neon;
         c->inter.apply_bdof = ff_vvc_apply_bdof_12_neon;
+
+        c->inter.put[1][2][0][1] = ff_vvc_put_chroma_h8_12_neon;
+        c->inter.put[1][3][0][1] = ff_vvc_put_chroma_h16_12_neon;
+        c->inter.put[1][4][0][1] =
+        c->inter.put[1][5][0][1] =
+        c->inter.put[1][6][0][1] = ff_vvc_put_chroma_h_x16_12_neon;
+
         c->inter.put[0][2][0][1] = ff_vvc_put_luma_h8_12_neon;
         c->inter.put[0][3][0][1] = ff_vvc_put_luma_h16_12_neon;
         c->inter.put[0][4][0][1] =
@@ -340,6 +391,13 @@ void ff_vvc_dsp_init_aarch64(VVCDSPContext *const c, const int bd)
         c->inter.put[0][4][1][0] =
         c->inter.put[0][5][1][0] =
         c->inter.put[0][6][1][0] = ff_vvc_put_luma_v_x16_12_neon;
+
+        c->inter.put[1][1][1][0] = ff_vvc_put_chroma_v4_12_neon;
+        c->inter.put[1][2][1][0] = ff_vvc_put_chroma_v8_12_neon;
+        c->inter.put[1][3][1][0] = ff_vvc_put_chroma_v16_12_neon;
+        c->inter.put[1][4][1][0] =
+        c->inter.put[1][5][1][0] =
+        c->inter.put[1][6][1][0] = ff_vvc_put_chroma_v_x16_12_neon;
 
         c->alf.filter[LUMA] = alf_filter_luma_12_neon;
         c->alf.filter[CHROMA] = alf_filter_chroma_12_neon;

@@ -66,26 +66,22 @@ static int compile(SwsContext *ctx, SwsOpList *ops, SwsCompiledOp *out)
     av_assert0(ops->num_ops > 0);
     const SwsPixelType read_type = ops->ops[0].type;
 
-    /* Make on-stack copy of `ops` to iterate over */
-    SwsOpList rest = *ops;
-    do {
-        ret = ff_sws_op_compile_tables(tables, FF_ARRAY_ELEMS(tables), &rest,
-                                       SWS_BLOCK_SIZE, chain);
-    } while (ret == AVERROR(EAGAIN));
-
-    if (ret < 0) {
-        ff_sws_op_chain_free(chain);
-        if (rest.num_ops < ops->num_ops) {
-            av_log(ctx, AV_LOG_TRACE, "Uncompiled remainder:\n");
-            ff_sws_op_list_print(ctx, AV_LOG_TRACE, AV_LOG_TRACE, &rest);
+    for (int i = 0; i < ops->num_ops; i++) {
+        ret = ff_sws_op_compile_tables(ctx, tables, FF_ARRAY_ELEMS(tables),
+                                       ops, i, SWS_BLOCK_SIZE, chain);
+        if (ret < 0) {
+            av_log(ctx, AV_LOG_TRACE, "Failed to compile op %d\n", i);
+            ff_sws_op_chain_free(chain);
+            return ret;
         }
-        return ret;
     }
 
     *out = (SwsCompiledOp) {
         .slice_align = 1,
         .block_size  = SWS_BLOCK_SIZE,
         .cpu_flags   = chain->cpu_flags,
+        .over_read   = chain->over_read,
+        .over_write  = chain->over_write,
         .priv        = chain,
         .free        = ff_sws_op_chain_free_cb,
     };

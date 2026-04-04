@@ -1,5 +1,5 @@
 /*
- * Copyright © 2024 Rémi Denis-Courmont.
+ * Copyright (C) 2026 Ramiro Polla
  *
  * This file is part of FFmpeg.
  *
@@ -18,31 +18,13 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#define VILL -0x8000
+#ifndef SWSCALE_AARCH64_OPS_LOOKUP_H
+#define SWSCALE_AARCH64_OPS_LOOKUP_H
 
-        .data
-ff_vtype_e8:
-ff_vtype_e8_1:
-        .half   VILL
-ff_vtype_e8_2:
-        .half   VILL
-ff_vtype_e8_4:
-        .half   VILL
-ff_vtype_e8_8:
-        .half   VILL
-ff_vtype_e8_16:
-        .half   VILL
-ff_vtype_e8_32:
-        .half   VILL
+#include "libswscale/ops_chain.h"
+#include "libswscale/aarch64/ops_impl.h"
 
-ff_vtype_e16:
-ff_vtype_e16_1:
-        .half   VILL
-ff_vtype_e16_2:
-        .half   VILL
-ff_vtype_e16_4:
-        .half   VILL
-ff_vtype_e16_8:
-        .half   VILL
-ff_vtype_e16_16:
-        .half   VILL
+/* Look up the exported function pointer for the given parameters. */
+SwsFuncPtr ff_sws_aarch64_lookup(const SwsAArch64OpImplParams *p);
+
+#endif /* SWSCALE_AARCH64_OPS_LOOKUP_H */

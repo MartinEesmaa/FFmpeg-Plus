@@ -32,6 +32,7 @@
 #  define PIXEL_MAX  0xFFFFFFFFu
 #  define SWAP_BYTES av_bswap32
 #  define pixel_t    uint32_t
+#  define inter_t    int64_t
 #  define block_t    u32block_t
 #  define px         u32
 #elif BIT_DEPTH == 16
@@ -39,12 +40,14 @@
 #  define PIXEL_MAX  0xFFFFu
 #  define SWAP_BYTES av_bswap16
 #  define pixel_t    uint16_t
+#  define inter_t    int64_t
 #  define block_t    u16block_t
 #  define px         u16
 #elif BIT_DEPTH == 8
 #  define PIXEL_TYPE SWS_PIXEL_U8
 #  define PIXEL_MAX  0xFFu
 #  define pixel_t    uint8_t
+#  define inter_t    int32_t
 #  define block_t    u8block_t
 #  define px         u8
 #else
@@ -53,7 +56,6 @@
 
 #define IS_FLOAT  0
 #define FMT_CHAR  u
-#define PIXEL_MIN 0
 #include "ops_tmpl_common.c"
 
 DECL_READ(read_planar, const int elems)
@@ -381,13 +383,13 @@ DECL_PATTERN(rshift)
 
 WRAP_COMMON_PATTERNS(lshift,
     .op       = SWS_OP_LSHIFT,
-    .setup    = ff_sws_setup_u8,
+    .setup    = ff_sws_setup_shift,
     .flexible = true,
 );
 
 WRAP_COMMON_PATTERNS(rshift,
     .op       = SWS_OP_RSHIFT,
-    .setup    = ff_sws_setup_u8,
+    .setup    = ff_sws_setup_shift,
     .flexible = true,
 );
 #endif /* BIT_DEPTH != 8 */
@@ -492,6 +494,16 @@ static const SwsOpTable fn(op_table_int) = {
         &fn(op_write_packed3),
         &fn(op_write_packed4),
 
+        &fn(op_filter1_v),
+        &fn(op_filter2_v),
+        &fn(op_filter3_v),
+        &fn(op_filter4_v),
+
+        &fn(op_filter1_h),
+        &fn(op_filter2_h),
+        &fn(op_filter3_h),
+        &fn(op_filter4_h),
+
 #if BIT_DEPTH == 8
         &fn(op_read_bits1),
         &fn(op_read_nibbles1),
@@ -586,9 +598,9 @@ static const SwsOpTable fn(op_table_int) = {
 
 #undef PIXEL_TYPE
 #undef PIXEL_MAX
-#undef PIXEL_MIN
 #undef SWAP_BYTES
 #undef pixel_t
+#undef inter_t
 #undef block_t
 #undef px
 

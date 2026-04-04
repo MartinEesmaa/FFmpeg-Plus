@@ -667,14 +667,22 @@ static void lock_queue(void *priv, uint32_t qf, uint32_t qidx)
 {
     AVHWDeviceContext *avhwctx = priv;
     const AVVulkanDeviceContext *hwctx = avhwctx->hwctx;
+#if FF_API_VULKAN_SYNC_QUEUES
+FF_DISABLE_DEPRECATION_WARNINGS
     hwctx->lock_queue(avhwctx, qf, qidx);
+FF_ENABLE_DEPRECATION_WARNINGS
+#endif
 }
 
 static void unlock_queue(void *priv, uint32_t qf, uint32_t qidx)
 {
     AVHWDeviceContext *avhwctx = priv;
     const AVVulkanDeviceContext *hwctx = avhwctx->hwctx;
+#if FF_API_VULKAN_SYNC_QUEUES
+FF_DISABLE_DEPRECATION_WARNINGS
     hwctx->unlock_queue(avhwctx, qf, qidx);
+FF_ENABLE_DEPRECATION_WARNINGS
+#endif
 }
 #endif
 
@@ -1106,6 +1114,8 @@ props_done:
     struct pl_render_params tmp_params = opts->params;
     for (int i = 0; i < s->nb_inputs; i++) {
         LibplaceboInput *in = &s->inputs[i];
+        if (!in->renderer)
+            continue; /* input was already freed */
         FilterLink *il = ff_filter_link(ctx->inputs[i]);
         FilterLink *ol = ff_filter_link(outlink);
         int high_fps = av_cmp_q(il->frame_rate, ol->frame_rate) >= 0;
@@ -1285,6 +1295,9 @@ static int libplacebo_activate(AVFilterContext *ctx)
             LibplaceboInput *in = &s->inputs[i];
             FilterLink *l = ff_filter_link(outlink);
             if (in->status && out_pts >= in->status_pts) {
+                /* Free up resources which will never be needed again */
+                pl_renderer_destroy(&in->renderer);
+                pl_queue_destroy(&in->queue);
                 in->qstatus = PL_QUEUE_EOF;
                 continue;
             }

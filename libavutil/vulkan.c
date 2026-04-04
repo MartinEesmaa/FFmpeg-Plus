@@ -928,9 +928,17 @@ int ff_vk_exec_submit(FFVulkanContext *s, FFVkExecContext *e)
         return AVERROR_EXTERNAL;
     }
 
+#if FF_API_VULKAN_SYNC_QUEUES
+FF_DISABLE_DEPRECATION_WARNINGS
     s->hwctx->lock_queue(s->device, e->qf, e->qi);
+FF_ENABLE_DEPRECATION_WARNINGS
+#endif
     ret = vk->QueueSubmit2(e->queue, 1, &submit_info, e->fence);
+#if FF_API_VULKAN_SYNC_QUEUES
+FF_DISABLE_DEPRECATION_WARNINGS
     s->hwctx->unlock_queue(s->device, e->qf, e->qi);
+FF_ENABLE_DEPRECATION_WARNINGS
+#endif
 
     if (ret != VK_SUCCESS) {
         av_log(s, AV_LOG_ERROR, "Unable to submit command buffer: %s\n",
@@ -1551,6 +1559,7 @@ int ff_vk_mt_is_np_rgb(enum AVPixelFormat pix_fmt)
         pix_fmt == AV_PIX_FMT_GBRAP   || pix_fmt == AV_PIX_FMT_GBRAP10 ||
         pix_fmt == AV_PIX_FMT_GBRAP12 || pix_fmt == AV_PIX_FMT_GBRAP14 ||
         pix_fmt == AV_PIX_FMT_GBRAP16 || pix_fmt == AV_PIX_FMT_GBRAP32 ||
+        pix_fmt == AV_PIX_FMT_GBRPF16 || pix_fmt == AV_PIX_FMT_GBRAPF16 ||
         pix_fmt == AV_PIX_FMT_GBRPF32 || pix_fmt == AV_PIX_FMT_GBRAPF32 ||
         pix_fmt == AV_PIX_FMT_X2RGB10 || pix_fmt == AV_PIX_FMT_X2BGR10 ||
         pix_fmt == AV_PIX_FMT_RGBAF32 || pix_fmt == AV_PIX_FMT_RGBF32 ||
@@ -1569,10 +1578,12 @@ void ff_vk_set_perm(enum AVPixelFormat pix_fmt, int lut[4], int inv)
     case AV_PIX_FMT_GBRAP12:
     case AV_PIX_FMT_GBRAP14:
     case AV_PIX_FMT_GBRAP16:
+    case AV_PIX_FMT_GBRAPF16:
     case AV_PIX_FMT_GBRP10:
     case AV_PIX_FMT_GBRP12:
     case AV_PIX_FMT_GBRP14:
     case AV_PIX_FMT_GBRP16:
+    case AV_PIX_FMT_GBRPF16:
     case AV_PIX_FMT_GBRPF32:
     case AV_PIX_FMT_GBRAP32:
     case AV_PIX_FMT_GBRAPF32:
@@ -1698,10 +1709,12 @@ const char *ff_vk_shader_rep_fmt(enum AVPixelFormat pix_fmt,
     case AV_PIX_FMT_GBRAP12:
     case AV_PIX_FMT_GBRAP14:
     case AV_PIX_FMT_GBRAP16:
+    case AV_PIX_FMT_GBRAPF16:
     case AV_PIX_FMT_GBRP10:
     case AV_PIX_FMT_GBRP12:
     case AV_PIX_FMT_GBRP14:
     case AV_PIX_FMT_GBRP16:
+    case AV_PIX_FMT_GBRPF16:
     case AV_PIX_FMT_YUV420P10:
     case AV_PIX_FMT_YUV420P12:
     case AV_PIX_FMT_YUV420P16:
@@ -1875,6 +1888,12 @@ static VkFormat map_fmt_to_rep(VkFormat fmt, enum FFVkShaderRepFormat rep_fmt)
             VK_FORMAT_UNDEFINED,
             VK_FORMAT_R32G32B32A32_SINT,
             VK_FORMAT_R32G32B32A32_UINT,
+        },
+        {
+            VK_FORMAT_R16_SFLOAT,
+            VK_FORMAT_R16_SFLOAT,
+            VK_FORMAT_UNDEFINED,
+            VK_FORMAT_UNDEFINED,
         },
     };
 #undef REPS_FMT_PACK

@@ -2,6 +2,18 @@ The last version increases of all libraries were on 2025-03-28
 
 API changes, most recent first:
 
+2026-03-14 - xxxxxxxxxx - lavu 60.29.100 - hwcontext_vulkan.h
+  Deprecate AVVulkanDeviceContext.lock_queue and
+  AVVulkanDeviceContext.unlock_queue without replacement.
+
+2026-03-12 - xxxxxxxxxx - lsws 9.7.100 - swscale.h
+  Add enum SwsScaler, and SwsContext.scaler/scaler_sub.
+
+2026-03-11 - 910000fe59d - lavu 60.28.100 - hwcontext_amf.h
+  Add av_amf_display_mastering_meta_to_hdrmeta(), av_amf_light_metadata_to_hdrmeta().
+  Add av_amf_extract_hdr_metadata(), av_amf_attach_hdr_metadata().
+  Add av_amf_get_color_profile().
+
 2026-03-07 - c23d56b173a - lavc 62.26.100 - codec_desc.h
   Add AV_CODEC_PROP_ENHANCEMENT.
 

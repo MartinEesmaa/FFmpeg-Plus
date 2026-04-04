@@ -271,6 +271,7 @@ TESTPROGS = adler32                                                     \
             cpu                                                         \
             crc                                                         \
             des                                                         \
+            detection_bbox                                              \
             dict                                                        \
             display                                                     \
             encryption_info                                             \
@@ -278,6 +279,7 @@ TESTPROGS = adler32                                                     \
             eval                                                        \
             file                                                        \
             fifo                                                        \
+            film_grain_params                                           \
             hash                                                        \
             hmac                                                        \
             hwdevice                                                    \
@@ -301,10 +303,13 @@ TESTPROGS = adler32                                                     \
             sha512                                                      \
             side_data_array                                             \
             softfloat                                                   \
+            spherical                                                   \
+            stereo3d                                                    \
             tree                                                        \
             twofish                                                     \
             utf8                                                        \
             uuid                                                        \
+            video_enc_params                                            \
             xtea                                                        \
             tea                                                         \
 

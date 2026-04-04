@@ -46,9 +46,14 @@
 #    define AV_HAS_ATTRIBUTE(x) 0
 #endif
 
-#if defined(__cplusplus) && defined(__has_cpp_attribute)
+#if defined(__cplusplus) && \
+    defined(__has_cpp_attribute) && \
+    __cplusplus >= 201103L
 #    define AV_HAS_STD_ATTRIBUTE(x) __has_cpp_attribute(x)
-#elif !defined(__cplusplus) && defined(__has_c_attribute)
+#elif !defined(__cplusplus) && \
+      defined(__has_c_attribute) && \
+      defined(__STDC_VERSION__) && \
+      __STDC_VERSION__ >= 202311L
 #    define AV_HAS_STD_ATTRIBUTE(x) __has_c_attribute(x)
 #else
 #    define AV_HAS_STD_ATTRIBUTE(x) 0
@@ -106,7 +111,7 @@
 #    define av_cold
 #endif
 
-#if AV_GCC_VERSION_AT_LEAST(4,1) && !defined(__llvm__)
+#if (AV_GCC_VERSION_AT_LEAST(4,1) && !defined(__clang__ )) || AV_HAS_ATTRIBUTE(flatten)
 #    define av_flatten __attribute__((flatten))
 #else
 #    define av_flatten

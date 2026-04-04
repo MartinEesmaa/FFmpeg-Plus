@@ -190,6 +190,7 @@ static const struct {
         { "hevc_dequant", checkasm_check_hevc_dequant },
         { "hevc_idct", checkasm_check_hevc_idct },
         { "hevc_pel", checkasm_check_hevc_pel },
+        { "hevc_pred", checkasm_check_hevc_pred },
         { "hevc_sao", checkasm_check_hevc_sao },
     #endif
     #if CONFIG_HPELDSP
@@ -222,6 +223,9 @@ static const struct {
     #if CONFIG_ME_CMP
         { "motion", checkasm_check_motion },
     #endif
+    #if CONFIG_MPEG4_DECODER
+        { "mpeg4videodsp", checkasm_check_mpeg4videodsp },
+    #endif
     #if CONFIG_MPEGVIDEO
         { "mpegvideo_unquantize", checkasm_check_mpegvideo_unquantize },
     #endif
@@ -245,6 +249,9 @@ static const struct {
     #endif
     #if CONFIG_RV40_DECODER
         { "rv40dsp", checkasm_check_rv40dsp },
+    #endif
+    #if CONFIG_SBC_ENCODER
+        { "sbcdsp", checkasm_check_sbcdsp },
     #endif
     #if CONFIG_SVQ1_ENCODER
         { "svq1enc", checkasm_check_svq1enc },
@@ -355,6 +362,9 @@ static const struct {
         { "fixed_dsp", checkasm_check_fixed_dsp },
         { "float_dsp", checkasm_check_float_dsp },
         { "lls",       checkasm_check_lls },
+#if CONFIG_PIXELUTILS
+        { "pixelutils",checkasm_check_pixelutils },
+#endif
         { "av_tx",     checkasm_check_av_tx },
 #endif
     { NULL }
@@ -380,6 +390,7 @@ static const struct {
     { "SME-I16I64", "sme_i16i64", AV_CPU_FLAG_SME_I16I64 },
     { "CRC",      "crc",      AV_CPU_FLAG_ARM_CRC },
     { "SME2",     "sme2",      AV_CPU_FLAG_SME2 },
+    { "PMULL",    "pmull_eor3", AV_CPU_FLAG_PMULL|AV_CPU_FLAG_EOR3 },
 #elif ARCH_ARM
     { "ARMV5TE",  "armv5te",  AV_CPU_FLAG_ARMV5TE },
     { "ARMV6",    "armv6",    AV_CPU_FLAG_ARMV6 },

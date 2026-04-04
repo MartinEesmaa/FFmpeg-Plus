@@ -61,7 +61,7 @@ SECTION .text
 ; Global entry point. See `ops_common.asm` for info.
 
 %macro process_fn 1 ; number of planes
-cglobal sws_process%1_x86, 6, 6 + 2 * %1, 16
+cglobal sws_process%1_x86, 6, 7 + 2 * %1, 16
             ; Args:
             ;   execq, implq, bxd, yd as defined in ops_common.int
             ;   bx_end and y_end are initially in tmp0d / tmp1d
@@ -81,6 +81,8 @@ cglobal sws_process%1_x86, 6, 6 + 2 * %1, 16
             add implq, SwsOpImpl.next
             mov [rsp +  0], tmp0q
             mov [rsp +  8], implq
+            movsxdifnidn bxq, bxd
+            movsxdifnidn yq, yd
 
             ; load plane pointers
             mov in0q,  [execq + SwsOpExec.in0]
@@ -126,6 +128,28 @@ IF %1 > 1,  add out1q, [execq + SwsOpExec.out_bump1]
 IF %1 > 2,  add out2q, [execq + SwsOpExec.out_bump2]
 IF %1 > 3,  add out3q, [execq + SwsOpExec.out_bump3]
             mov bxd, [rsp + 16]
+            ; conditionally apply y bump (if non-NULL)
+            mov tmp0q, [execq + SwsOpExec.in_bump_y]
+            test tmp0q, tmp0q
+            jz .continue
+            movsxd tmp0q, [tmp0q + yq * 4 - 4] ; load (signed) y bump
+%if %1 > 3
+            mov tmp1q, tmp0q
+            imul tmp1q, [execq + SwsOpExec.in_stride3]
+            add in3q, tmp1q
+%endif
+%if %1 > 2
+            mov tmp1q, tmp0q
+            imul tmp1q, [execq + SwsOpExec.in_stride2]
+            add in2q, tmp1q
+%endif
+%if %1 > 1
+            mov tmp1q, tmp0q
+            imul tmp1q, [execq + SwsOpExec.in_stride1]
+            add in1q, tmp1q
+%endif
+            imul tmp0q, [execq + SwsOpExec.in_stride0]
+            add in0q, tmp0q
 .continue:
             jmp [rsp]
 .end:
@@ -206,9 +230,11 @@ packed_shuffle 16,  8 ; 16 -> 8
 packed_shuffle 10, 15 ; 16 -> 24
 packed_shuffle  8, 16 ; 16 -> 32, 32 -> 64
 packed_shuffle  4, 12 ; 16 -> 48
+packed_shuffle 15,  5 ; 24 -> 8
 packed_shuffle 15, 15 ; 24 -> 24
 packed_shuffle 12, 16 ; 24 -> 32
 packed_shuffle  6, 12 ; 24 -> 48
+packed_shuffle 16,  4 ; 32 -> 8,  64 -> 16
 packed_shuffle 16, 12 ; 32 -> 24, 64 -> 48
 packed_shuffle 16, 16 ; 32 -> 32, 64 -> 64
 packed_shuffle  8, 12 ; 32 -> 48

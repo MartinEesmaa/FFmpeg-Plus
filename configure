@@ -397,7 +397,7 @@ Toolchain options:
   --tempprefix=PATH        force fixed dir/prefix instead of mktemp for checks
   --toolchain=NAME         set tool defaults according to NAME
                            (<tool>[-sanitizer[-...]], e.g. clang-asan-ubsan
-                           tools: gcc, clang, msvc, icl, gcov, llvm-cov,
+                           tools: gcc, clang, llvm, msvc, icl, gcov, llvm-cov,
                                   valgrind-memcheck, valgrind-massif, hardened
                            sanitizers: asan, fuzz, lsan, msan, tsan, ubsan)
   --nm=NM                  use nm tool NM [$nm_default]
@@ -489,6 +489,8 @@ Optimization options (experts only):
   --disable-arm-crc        disable ARM/AArch64 CRC optimizations
   --disable-dotprod        disable DOTPROD optimizations
   --disable-i8mm           disable I8MM optimizations
+  --disable-pmull          disable PMULL optimizations
+  --disable-eor3           disable EOR3 optimizations
   --disable-sve            disable SVE optimizations
   --disable-sve2           disable SVE2 optimizations
   --disable-sme            disable SME optimizations
@@ -1086,6 +1088,10 @@ hostcc_o(){
     eval printf '%s\\n' $HOSTCC_O
 }
 
+hostld_o(){
+    eval printf '%s\\n' $HOSTLD_O
+}
+
 glslc_o(){
     eval printf '%s\\n' $GLSLC_O
 }
@@ -1301,7 +1307,14 @@ test_ld(){
     test_$type $($cflags_filter $flags) || return
     flags=$($ldflags_filter $flags)
     libs=$($ldflags_filter $libs)
-    test_cmd $ld $LDFLAGS $LDEXEFLAGS $flags $(ld_o $TMPE) $TMPO $libs $extralibs
+    log $ld $LDFLAGS $LDEXEFLAGS $flags $(ld_o $TMPE) $TMPO $libs $extralibs
+    output=$($ld $LDFLAGS $LDEXEFLAGS $flags $(ld_o $TMPE) $TMPO $libs $extralibs 2>&1)
+    ret=$?
+    echo "$output" >> $logfile
+    # link.exe and lld-link exit 0 even for unrecognized options, emitting
+    # only a warning (LNK4044 / "ignoring unknown argument").  Treat such
+    # output as failure so check_ldflags rejects those flags correctly.
+    test $ret -eq 0 && ! echo "$output" | grep -qE 'LNK4044|lld-link: warning: ignoring unknown argument'
 }
 
 check_ld(){
@@ -1840,6 +1853,16 @@ test_host_cc(){
     test_cmd $host_cc $host_cflags "$@" $HOSTCC_C $(hostcc_o $TMPO) $TMPC
 }
 
+test_host_ld(){
+    log test_host_ld "$@"
+    flags=$(filter_out '-l*|*.so' $@)
+    libs=$(filter '-l*|*.so' $@)
+    test_host_cc $($host_cflags_filter $flags) || return
+    flags=$($host_ldflags_filter $flags)
+    libs=$($host_ldflags_filter $libs)
+    test_cmd $host_ld $host_ldflags $flags $(hostld_o $TMPE) $TMPO $libs $host_extralibs
+}
+
 test_host_cpp(){
     log test_host_cpp "$@"
     cat > $TMPC
@@ -1902,6 +1925,27 @@ check_host_cpp_condition(){
     shift 1
     disable $name
     test_host_cpp_condition "$@" && enable $name
+}
+
+check_host_lib(){
+    log check_host_lib "$@"
+    headers="$1"
+    funcs="$2"
+    shift 2
+    {
+        for hdr in $headers; do
+            print_include $hdr
+        done
+        echo "#include <stdint.h>"
+        for func in $funcs; do
+            echo "long check_$func(void) { return (long) $func; }"
+        done
+        echo "int main(void) { int ret = 0;"
+        for func in $funcs; do
+            echo " ret |= ((intptr_t)check_$func) & 0xFFFF;"
+        done
+        echo "return ret; }"
+    } | test_host_ld "$@" && append host_extralibs "$@"
 }
 
 cp_if_changed(){
@@ -2313,6 +2357,8 @@ ARCH_EXT_LIST_ARM="
     arm_crc
     dotprod
     i8mm
+    pmull
+    eor3
     neon
     vfp
     vfpv3
@@ -2589,6 +2635,8 @@ TOOLCHAIN_FEATURES="
     as_archext_crc_directive
     as_archext_dotprod_directive
     as_archext_i8mm_directive
+    as_archext_sha3_directive
+    as_archext_aes_directive
     as_archext_sve_directive
     as_archext_sve2_directive
     as_archext_sme_directive
@@ -2932,6 +2980,8 @@ setend_deps="arm"
 arm_crc_deps="aarch64"
 dotprod_deps="aarch64 neon"
 i8mm_deps="aarch64 neon"
+pmull_deps="aarch64 neon"
+eor3_deps="aarch64 neon"
 sve_deps="aarch64 neon"
 sve2_deps="aarch64 neon sve"
 sme_deps="aarch64 neon sve sve2"
@@ -3800,6 +3850,7 @@ libkvazaar_encoder_deps="libkvazaar"
 liblc3_decoder_deps="liblc3"
 liblc3_encoder_deps="liblc3"
 liblc3_encoder_select="audio_frame_queue"
+liblcevc_dec_select="cbs_lcevc"
 libmodplug_demuxer_deps="libmodplug"
 libmad_decoder_deps="libmad"
 libmp3lame_encoder_deps="libmp3lame"
@@ -4484,7 +4535,7 @@ GLSLC_O='-o $@'
 NVCC_C='-c'
 NVCC_O='-o $@'
 
-host_extralibs='-lm'
+host_extralibs=
 host_cflags_filter=echo
 host_ldflags_filter=echo
 
@@ -4888,6 +4939,16 @@ case "$toolchain" in
         add_sanitizers "${toolchain#clang-}"
         cc_default="clang"
         cxx_default="clang++"
+    ;;
+    llvm|llvm-*)
+        cc_default="clang"
+        cxx_default="clang++"
+        ar_default="llvm-ar"
+        nm_default="llvm-nm -g"
+        ranlib_default="llvm-ranlib"
+        strip_default="llvm-strip"
+        windres_default="llvm-windres"
+        test "$toolchain" != "llvm" && add_sanitizers "${toolchain#llvm-}"
     ;;
     gcc-*)
         add_sanitizers "${toolchain#gcc-}"
@@ -6584,8 +6645,10 @@ if enabled aarch64; then
     # internal assembler in clang 3.3 does not support this instruction
     enabled neon && check_insn neon 'ext   v0.8B, v0.8B, v1.8B, #1'
 
-    archext_list="arm_crc dotprod i8mm sve sve2 sme sme_i16i64 sme2"
+    archext_list="arm_crc dotprod i8mm pmull eor3 sve sve2 sme sme_i16i64 sme2"
     enabled arm_crc && check_archext_name_insn arm_crc crc 'crc32x w0, w0, x0'
+    enabled pmull   && check_archext_name_insn pmull aes 'pmull v0.1q, v0.1d, v0.1d'
+    enabled eor3    && check_archext_name_insn eor3 sha3 'eor3 v0.16b, v1.16b, v2.16b, v3.16b'
     enabled dotprod && check_archext_insn dotprod 'udot v0.4s, v0.16b, v0.16b'
     enabled i8mm    && check_archext_insn i8mm    'usdot v0.4s, v0.16b, v0.16b'
     enabled sve     && check_archext_insn sve     'whilelt p0.s, x0, x1'
@@ -6792,7 +6855,6 @@ EOF
         x86asmexe_probe=$1
         if test_cmd $x86asmexe_probe -v; then
             x86asmexe=$x86asmexe_probe
-            x86asm_debug="-g -F dwarf"
             X86ASM_DEPFLAGS='-MD $(@:.o=.d)'
         fi
         check_x86asm x86asm "movbe ecx, [5]"
@@ -6806,9 +6868,7 @@ EOF
         disabled x86asm && die "nasm not found or too old. Please install/update nasm or use --disable-x86asm for a build without hand-optimized assembly."
         X86ASMFLAGS="-f $objformat"
         test -n "$extern_prefix"  && append X86ASMFLAGS "-DPREFIX"
-        case "$objformat" in
-            elf*) enabled debug && append X86ASMFLAGS $x86asm_debug ;;
-        esac
+        enabled debug && append X86ASMFLAGS "-g"
 
         enabled avx512    && check_x86asm avx512_external    "vmovdqa32 [eax]{k1}{z}, zmm0"
         enabled avx512icl && check_x86asm avx512icl_external "vpdpwssds zmm31{k1}{z}, zmm29, zmm28"
@@ -7236,6 +7296,7 @@ enabled zlib_gzip && enabled gzip || disable resource_compression
 check_lib libdl dlfcn.h "dlopen dlsym" || check_lib libdl dlfcn.h "dlopen dlsym" -ldl
 
 check_lib libm math.h sin -lm
+check_host_lib math.h sin -lm
 
 atan2f_args=2
 copysign_args=2
@@ -7774,6 +7835,9 @@ enabled vdpau &&
     check_lib vdpau_x11 "vdpau/vdpau.h vdpau/vdpau_x11.h" vdp_device_create_x11 -lvdpau -lX11
 
 # Check for the Vulkan headers
+if enabled vulkan; then
+    check_cpp_condition vulkan "spirv/unified1/spirv.h" "defined(SPV_VERSION)"
+fi
 if enabled_all vulkan vulkan_static; then
     check_pkg_config vulkan "vulkan >= 1.3.277" "vulkan/vulkan.h" "defined VK_VERSION_1_3" ||
         check_lib vulkan "vulkan/vulkan.h" vkGetInstanceProcAddr -lvulkan
@@ -7871,7 +7935,7 @@ fi
 
 enabled amf &&
     check_cpp_condition amf "AMF/core/Version.h" \
-        "(AMF_VERSION_MAJOR << 48 | AMF_VERSION_MINOR << 32 | AMF_VERSION_RELEASE << 16 | AMF_VERSION_BUILD_NUM) >= 0x0001000400240000"
+        "(AMF_VERSION_MAJOR << 48 | AMF_VERSION_MINOR << 32 | AMF_VERSION_RELEASE << 16 | AMF_VERSION_BUILD_NUM) >= 0x1000500000000"
 
 # Funny iconv installations are not unusual, so check it after all flags have been set
 if enabled libc_iconv; then
@@ -8042,11 +8106,6 @@ if [ -n "$lto" ]; then
 fi
 
 enabled ftrapv && check_cflags -ftrapv
-
-test_cc -mno-red-zone <<EOF && noredzone_flags="-mno-red-zone"
-int x;
-EOF
-
 
 if enabled icc; then
     # Just warnings, no remarks
@@ -8439,6 +8498,8 @@ if enabled aarch64; then
     echo "NEON enabled              ${neon-no}"
     echo "DOTPROD enabled           ${dotprod-no}"
     echo "I8MM enabled              ${i8mm-no}"
+    echo "PMULL enabled             ${pmull-no}"
+    echo "EOR3 enabled              ${eor3-no}"
     echo "SVE enabled               ${sve-no}"
     echo "SVE2 enabled              ${sve2-no}"
     echo "SME enabled               ${sme-no}"
@@ -8705,7 +8766,6 @@ SLIB_INSTALL_EXTRA_LIB=${SLIB_INSTALL_EXTRA_LIB}
 SLIB_INSTALL_EXTRA_SHLIB=${SLIB_INSTALL_EXTRA_SHLIB}
 VERSION_SCRIPT_POSTPROCESS_CMD=${VERSION_SCRIPT_POSTPROCESS_CMD}
 SAMPLES:=${samples:-\$(FATE_SAMPLES)}
-NOREDZONE_FLAGS=$noredzone_flags
 LIBFUZZER_PATH=$libfuzzer_path
 IGNORE_TESTS=$ignore_tests
 VERSION_TRACKING=$version_tracking

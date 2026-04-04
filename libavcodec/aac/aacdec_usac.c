@@ -215,6 +215,11 @@ static int decode_usac_element_pair(AACDecContext *ac,
 
     if (e->stereo_config_index) {
         e->mps.freq_res = get_bits(gb, 3); /* bsFreqRes */
+        if (!e->mps.freq_res)
+            return AVERROR_INVALIDDATA; /* value 0 is reserved */
+
+        int numBands = ((int[]){0,28,20,14,10,7,5,4})[e->mps.freq_res]; // ISO/IEC 23003-1:2007, 5.2, Table 39
+
         e->mps.fixed_gain = get_bits(gb, 3); /* bsFixedGainDMX */
         e->mps.temp_shape_config = get_bits(gb, 2); /* bsTempShapeConfig */
         e->mps.decorr_config = get_bits(gb, 2); /* bsDecorrConfig */
@@ -222,12 +227,21 @@ static int decode_usac_element_pair(AACDecContext *ac,
         e->mps.phase_coding = get_bits1(gb); /* bsPhaseCoding */
 
         e->mps.otts_bands_phase_present = get_bits1(gb);
-        if (e->mps.otts_bands_phase_present) /* bsOttBandsPhasePresent */
-            e->mps.otts_bands_phase = get_bits(gb, 5); /* bsOttBandsPhase */
+        int otts_bands_phase = ((int[]){0,10,10,7,5,3,2,2})[e->mps.freq_res]; // Table 109 — Default value of bsOttBandsPhase
+        if (e->mps.otts_bands_phase_present) { /* bsOttBandsPhasePresent */
+            otts_bands_phase = get_bits(gb, 5); /* bsOttBandsPhase */
+            if (otts_bands_phase > numBands)
+                return AVERROR_INVALIDDATA;
+        }
+        e->mps.otts_bands_phase = otts_bands_phase;
 
         e->mps.residual_coding = e->stereo_config_index >= 2; /* bsResidualCoding */
         if (e->mps.residual_coding) {
-            e->mps.residual_bands = get_bits(gb, 5); /* bsResidualBands */
+            int residual_bands = get_bits(gb, 5); /* bsResidualBands */
+            if (residual_bands > numBands)
+                return AVERROR_INVALIDDATA;
+            e->mps.residual_bands = residual_bands;
+
             e->mps.otts_bands_phase = FFMAX(e->mps.otts_bands_phase,
                                             e->mps.residual_bands);
             e->mps.pseudo_lr = get_bits1(gb); /* bsPseudoLr */
@@ -1293,7 +1307,8 @@ static void spectrum_decode(AACDecContext *ac, AACUSACConfig *usac,
         SingleChannelElement *sce = &cpe->ch[ch];
         AACUsacElemData *ue = &sce->ue;
 
-        spectrum_scale(ac, sce, ue);
+        if (!ue->core_mode)
+            spectrum_scale(ac, sce, ue);
     }
 
     if (nb_channels > 1 && us->common_window) {
@@ -1327,13 +1342,13 @@ static void spectrum_decode(AACDecContext *ac, AACUSACConfig *usac,
 
     /* Save coefficients and alpha values for prediction reasons */
     if (nb_channels > 1) {
-        AACUsacStereo *us = &cpe->us;
+        AACUsacStereo *us2 = &cpe->us;
         for (int ch = 0; ch < nb_channels; ch++) {
             SingleChannelElement *sce = &cpe->ch[ch];
             memcpy(sce->prev_coeffs, sce->coeffs, sizeof(sce->coeffs));
         }
-        memcpy(us->prev_alpha_q_re, us->alpha_q_re, sizeof(us->alpha_q_re));
-        memcpy(us->prev_alpha_q_im, us->alpha_q_im, sizeof(us->alpha_q_im));
+        memcpy(us2->prev_alpha_q_re, us2->alpha_q_re, sizeof(us2->alpha_q_re));
+        memcpy(us2->prev_alpha_q_im, us2->alpha_q_im, sizeof(us2->alpha_q_im));
     }
 
     for (int ch = 0; ch < nb_channels; ch++) {
@@ -1343,8 +1358,9 @@ static void spectrum_decode(AACDecContext *ac, AACUSACConfig *usac,
         if (sce->tns.present && ((nb_channels == 1) || (us->tns_on_lr)))
             ac->dsp.apply_tns(sce->coeffs, &sce->tns, &sce->ics, 1);
 
-        ac->oc[1].m4ac.frame_length_short ? ac->dsp.imdct_and_windowing_768(ac, sce) :
-                                            ac->dsp.imdct_and_windowing(ac, sce);
+        if (!sce->ue.core_mode)
+            ac->oc[1].m4ac.frame_length_short ? ac->dsp.imdct_and_windowing_768(ac, sce) :
+                                                ac->dsp.imdct_and_windowing(ac, sce);
     }
 }
 
@@ -1719,8 +1735,8 @@ static int parse_audio_preroll(AACDecContext *ac, GetBitContext *gb)
         }
 
         /* Byte alignment is not guaranteed. */
-        for (int i = 0; i < au_len; i++)
-            tmp_buf[i] = get_bits(gb, 8);
+        for (int j = 0; j < au_len; j++)
+            tmp_buf[j] = get_bits(gb, 8);
 
         ret = init_get_bits8(&gbc, tmp_buf, au_len);
         if (ret < 0)

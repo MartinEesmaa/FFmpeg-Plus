@@ -30,9 +30,9 @@
 #include "checkasm.h"
 
 enum {
-    LINES  = 2,
-    NB_PLANES = 4,
-    PIXELS = 64,
+    NB_PLANES   = 4,
+    PIXELS      = 64,
+    LINES       = 16,
 };
 
 enum {
@@ -103,6 +103,14 @@ static void fill8(uint8_t *line, int num, unsigned range)
     }
 }
 
+static void set_range(AVRational *rangeq, unsigned range, unsigned range_def)
+{
+    if (!range)
+        range = range_def;
+    if (range && range <= INT_MAX)
+        *rangeq = (AVRational) { range, 1 };
+}
+
 static void check_ops(const char *report, const unsigned ranges[NB_PLANES],
                       const SwsOp *ops)
 {
@@ -117,10 +125,10 @@ static void check_ops(const char *report, const unsigned ranges[NB_PLANES],
 
     declare_func(void, const SwsOpExec *, const void *, int bx, int y, int bx_end, int y_end);
 
-    DECLARE_ALIGNED_64(char, src0)[NB_PLANES][LINES][PIXELS * sizeof(uint32_t[4])];
-    DECLARE_ALIGNED_64(char, src1)[NB_PLANES][LINES][PIXELS * sizeof(uint32_t[4])];
-    DECLARE_ALIGNED_64(char, dst0)[NB_PLANES][LINES][PIXELS * sizeof(uint32_t[4])];
-    DECLARE_ALIGNED_64(char, dst1)[NB_PLANES][LINES][PIXELS * sizeof(uint32_t[4])];
+    static DECLARE_ALIGNED_64(char, src0)[NB_PLANES][LINES][PIXELS * sizeof(uint32_t[4])];
+    static DECLARE_ALIGNED_64(char, src1)[NB_PLANES][LINES][PIXELS * sizeof(uint32_t[4])];
+    static DECLARE_ALIGNED_64(char, dst0)[NB_PLANES][LINES][PIXELS * sizeof(uint32_t[4])];
+    static DECLARE_ALIGNED_64(char, dst1)[NB_PLANES][LINES][PIXELS * sizeof(uint32_t[4])];
 
     if (!ctx)
         return;
@@ -136,10 +144,28 @@ static void check_ops(const char *report, const unsigned ranges[NB_PLANES],
     for (int p = 0; p < NB_PLANES; p++) {
         void *plane = src0[p];
         switch (read_op->type) {
-        case U8:    fill8(plane, sizeof(src0[p]) /  sizeof(uint8_t), ranges[p]); break;
-        case U16:  fill16(plane, sizeof(src0[p]) / sizeof(uint16_t), ranges[p]); break;
-        case U32:  fill32(plane, sizeof(src0[p]) / sizeof(uint32_t), ranges[p]); break;
-        case F32: fill32f(plane, sizeof(src0[p]) / sizeof(uint32_t), ranges[p]); break;
+        case U8:
+            fill8(plane, sizeof(src0[p]) /  sizeof(uint8_t), ranges[p]);
+            set_range(&oplist.comps_src.max[p], ranges[p], UINT8_MAX);
+            oplist.comps_src.min[p] = (AVRational) { 0, 1 };
+            break;
+        case U16:
+            fill16(plane, sizeof(src0[p]) / sizeof(uint16_t), ranges[p]);
+            set_range(&oplist.comps_src.max[p], ranges[p], UINT16_MAX);
+            oplist.comps_src.min[p] = (AVRational) { 0, 1 };
+            break;
+        case U32:
+            fill32(plane, sizeof(src0[p]) / sizeof(uint32_t), ranges[p]);
+            set_range(&oplist.comps_src.max[p], ranges[p], UINT32_MAX);
+            oplist.comps_src.min[p] = (AVRational) { 0, 1 };
+            break;
+        case F32:
+            fill32f(plane, sizeof(src0[p]) / sizeof(uint32_t), ranges[p]);
+            if (ranges[p] && ranges[p] <= INT_MAX) {
+                oplist.comps_src.max[p] = (AVRational) { ranges[p], 1 };
+                oplist.comps_src.min[p] = (AVRational) { 0, 1 };
+            }
+            break;
         }
     }
 
@@ -174,12 +200,30 @@ static void check_ops(const char *report, const unsigned ranges[NB_PLANES],
 
     SwsOpExec exec = {0};
     exec.width = PIXELS;
-    exec.height = exec.slice_h = 1;
+    exec.height = exec.slice_h = LINES;
     for (int i = 0; i < NB_PLANES; i++) {
         exec.in_stride[i]  = sizeof(src0[i][0]);
         exec.out_stride[i] = sizeof(dst0[i][0]);
         exec.in_bump[i]  = exec.in_stride[i]  - read_size;
         exec.out_bump[i] = exec.out_stride[i] - write_size;
+    }
+
+    int32_t in_bump_y[LINES];
+    if (read_op->rw.filter == SWS_OP_FILTER_V) {
+        const int *offsets = read_op->rw.kernel->offsets;
+        for (int y = 0; y < LINES - 1; y++)
+            in_bump_y[y] = offsets[y + 1] - offsets[y] - 1;
+        in_bump_y[LINES - 1] = 0;
+        exec.in_bump_y = in_bump_y;
+    }
+
+    int32_t in_offset_x[PIXELS];
+    if (read_op->rw.filter == SWS_OP_FILTER_H) {
+        const int *offsets = read_op->rw.kernel->offsets;
+        const int rw_bits = rw_pixel_bits(read_op);
+        for (int x = 0; x < PIXELS; x++)
+            in_offset_x[x] = offsets[x] * rw_bits >> 3;
+        exec.in_offset_x = in_offset_x;
     }
 
     /**
@@ -241,10 +285,9 @@ static void check_ops(const char *report, const unsigned ranges[NB_PLANES],
         bench(comp_new.func, &exec, comp_new.priv, 0, 0, PIXELS / comp_new.block_size, LINES);
     }
 
-    if (comp_new.func != comp_ref.func && comp_new.free)
-        comp_new.free(comp_new.priv);
-    if (comp_ref.free)
-        comp_ref.free(comp_ref.priv);
+    if (comp_new.func != comp_ref.func)
+        ff_sws_compiled_op_unref(&comp_new);
+    ff_sws_compiled_op_unref(&comp_ref);
     sws_free_context(&ctx);
 }
 
@@ -455,45 +498,45 @@ static void check_clear(void)
             const AVRational zero   = (AVRational) { 0, 1};
             const AVRational none = {0};
 
-            const SwsConst patterns[] = {
+            const SwsClearOp patterns[] = {
                 /* Zero only */
-                {.q4 = {   none,   none,   none,   zero }},
-                {.q4 = {   zero,   none,   none,   none }},
+                {{   none,   none,   none,   zero }},
+                {{   zero,   none,   none,   none }},
                 /* Alpha only */
-                {.q4 = {   none,   none,   none,  alpha }},
-                {.q4 = {  alpha,   none,   none,   none }},
+                {{   none,   none,   none,  alpha }},
+                {{  alpha,   none,   none,   none }},
                 /* Chroma only */
-                {.q4 = { chroma, chroma,   none,   none }},
-                {.q4 = {   none, chroma, chroma,   none }},
-                {.q4 = {   none,   none, chroma, chroma }},
-                {.q4 = { chroma,   none, chroma,   none }},
-                {.q4 = {   none, chroma,   none, chroma }},
+                {{ chroma, chroma,   none,   none }},
+                {{   none, chroma, chroma,   none }},
+                {{   none,   none, chroma, chroma }},
+                {{ chroma,   none, chroma,   none }},
+                {{   none, chroma,   none, chroma }},
                 /* Alpha+chroma */
-                {.q4 = { chroma, chroma,   none,  alpha }},
-                {.q4 = {   none, chroma, chroma,  alpha }},
-                {.q4 = {  alpha,   none, chroma, chroma }},
-                {.q4 = { chroma,   none, chroma,  alpha }},
-                {.q4 = {  alpha, chroma,   none, chroma }},
+                {{ chroma, chroma,   none,  alpha }},
+                {{   none, chroma, chroma,  alpha }},
+                {{  alpha,   none, chroma, chroma }},
+                {{ chroma,   none, chroma,  alpha }},
+                {{  alpha, chroma,   none, chroma }},
                 /* Random values */
-                {.q4 = { none, rndq(t), rndq(t), rndq(t) }},
-                {.q4 = { none, rndq(t), rndq(t), rndq(t) }},
-                {.q4 = { none, rndq(t), rndq(t), rndq(t) }},
-                {.q4 = { none, rndq(t), rndq(t), rndq(t) }},
+                {{ none, rndq(t), rndq(t), rndq(t) }},
+                {{ none, rndq(t), rndq(t), rndq(t) }},
+                {{ none, rndq(t), rndq(t), rndq(t) }},
+                {{ none, rndq(t), rndq(t), rndq(t) }},
             };
 
             for (int i = 0; i < FF_ARRAY_ELEMS(patterns); i++) {
                 CHECK(FMT("clear_pattern_%s[%d]", type, i), 4, 4, t, t, {
-                    .op   = SWS_OP_CLEAR,
-                    .type = t,
-                    .c    = patterns[i],
+                    .op    = SWS_OP_CLEAR,
+                    .type  = t,
+                    .clear = patterns[i],
                 });
             }
         } else if (!ff_sws_pixel_type_is_int(t)) {
             /* Floating point YUV doesn't exist, only alpha needs to be cleared */
             CHECK(FMT("clear_alpha_%s", type), 4, 4, t, t, {
-                .op      = SWS_OP_CLEAR,
-                .type    = t,
-                .c.q4[3] = { 0, 1 },
+                .op   = SWS_OP_CLEAR,
+                .type = t,
+                .clear.value[3] = { 0, 1 },
             });
         }
     }
@@ -508,15 +551,15 @@ static void check_shift(void)
 
         for (int shift = 1; shift <= 8; shift++) {
             CHECK_COMMON(FMT("lshift%d_%s", shift, type), t, t, {
-                .op   = SWS_OP_LSHIFT,
-                .type = t,
-                .c.u  = shift,
+                .op    = SWS_OP_LSHIFT,
+                .type  = t,
+                .shift = { shift },
             });
 
             CHECK_COMMON(FMT("rshift%d_%s", shift, type), t, t, {
-                .op   = SWS_OP_RSHIFT,
-                .type = t,
-                .c.u  = shift,
+                .op    = SWS_OP_RSHIFT,
+                .type  = t,
+                .shift = { shift },
             });
         }
     }
@@ -654,13 +697,13 @@ static void check_min_max(void)
         CHECK_COMMON(FMT("min_%s", type), t, t, {
             .op = SWS_OP_MIN,
             .type = t,
-            .c.q4 = { rndq(t), rndq(t), rndq(t), rndq(t) },
+            .clamp = {{ rndq(t), rndq(t), rndq(t), rndq(t) }},
         });
 
         CHECK_COMMON(FMT("max_%s", type), t, t, {
             .op = SWS_OP_MAX,
             .type = t,
-            .c.q4 = { rndq(t), rndq(t), rndq(t), rndq(t) },
+            .clamp = {{ rndq(t), rndq(t), rndq(t), rndq(t) }},
         });
     }
 }
@@ -733,16 +776,89 @@ static void check_scale(void)
             const unsigned scale = rnd() & max;
             const unsigned range = max / (scale ? scale : 1);
             CHECK_COMMON_RANGE(FMT("scale_%s", type), range, t, t, {
-                .op   = SWS_OP_SCALE,
-                .type = t,
-                .c.q  = { scale, 1 },
+                .op    = SWS_OP_SCALE,
+                .type  = t,
+                .scale = {{ scale, 1 }},
             });
         } else {
             CHECK_COMMON(FMT("scale_%s", type), t, t, {
-                .op   = SWS_OP_SCALE,
-                .type = t,
-                .c.q  = rndq(t),
+                .op    = SWS_OP_SCALE,
+                .type  = t,
+                .scale = { rndq(t) },
             });
+        }
+    }
+}
+
+static void check_filter(void)
+{
+    SwsFilterParams params = {
+        .scaler_params = { SWS_PARAM_DEFAULT, SWS_PARAM_DEFAULT },
+    };
+
+    SwsFilterWeights *filter;
+
+    for (SwsPixelType t = U8; t < SWS_PIXEL_TYPE_NB; t++) {
+        const char *type = ff_sws_pixel_type_name(t);
+        for (SwsScaler scaler = SWS_SCALE_AUTO + 1; scaler < SWS_SCALE_NB; scaler++) {
+            params.scaler = scaler;
+            params.dst_size = LINES;
+            for (int h = 1; h <= LINES; h += h) {
+                params.src_size = h;
+                int ret = ff_sws_filter_generate(NULL, &params, &filter);
+                if (ret < 0) {
+                    fail();
+                    return;
+                }
+
+                const char *name = filter->name;
+                for (int n = 1; n <= 4; n++) {
+                    check_ops(FMT("%s_filter%d_v_%dx%d_%s", name, n, PIXELS, h, type), NULL, (SwsOp[]) {
+                        {
+                            .op = SWS_OP_READ,
+                            .type = t,
+                            .rw.elems = n,
+                            .rw.filter = SWS_OP_FILTER_V,
+                            .rw.kernel = filter,
+                        }, {
+                            .op = SWS_OP_WRITE,
+                            .type = SWS_PIXEL_F32,
+                            .rw.elems = n,
+                        }, {0}
+                    });
+                }
+
+                av_refstruct_unref(&filter);
+            }
+
+            params.dst_size = PIXELS;
+            for (int w = 1; w <= PIXELS; w += w) {
+                params.src_size = w;
+                int ret = ff_sws_filter_generate(NULL, &params, &filter);
+                if (ret < 0) {
+                    fail();
+                    return;
+                }
+
+                const char *name = filter->name;
+                for (int n = 1; n <= 4; n++) {
+                    check_ops(FMT("%s_filter%d_h_%dx%d_%s", name, n, w, LINES, type), NULL, (SwsOp[]) {
+                        {
+                            .op = SWS_OP_READ,
+                            .type = t,
+                            .rw.elems = n,
+                            .rw.filter = SWS_OP_FILTER_H,
+                            .rw.kernel = filter,
+                        }, {
+                            .op = SWS_OP_WRITE,
+                            .type = SWS_PIXEL_F32,
+                            .rw.elems = n,
+                        }, {0}
+                    });
+                }
+
+                av_refstruct_unref(&filter);
+            }
         }
     }
 }
@@ -771,4 +887,6 @@ void checkasm_check_sw_ops(void)
     report("linear");
     check_scale();
     report("scale");
+    check_filter();
+    report("filter");
 }

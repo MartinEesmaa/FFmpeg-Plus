@@ -44,9 +44,12 @@
  * directly incremented by the corresponding read/write functions.
  */
 typedef struct SwsOpIter {
-    const uint8_t *in[4];
-    uint8_t *out[4];
+    uintptr_t in[4];
+    uintptr_t out[4];
     int x, y;
+
+    /* Link back to per-slice execution context */
+    const SwsOpExec *exec;
 } SwsOpIter;
 
 #ifdef __clang__
@@ -68,6 +71,7 @@ typedef struct SwsOpIter {
 #define fn(name)  bitfn(name, FN_SUFFIX)
 
 #define av_q2pixel(q) ((q).den ? (pixel_t) (q).num / (q).den : 0)
+#define bump_ptr(ptr, bump) ((pixel_t *) ((uintptr_t) (ptr) + (bump)))
 
 /* Helper macros to make writing common function signatures less painful */
 #define DECL_FUNC(NAME, ...)                                                    \
@@ -114,14 +118,15 @@ typedef struct SwsOpIter {
         (iter, &impl[1], __VA_ARGS__)
 
 /* Helper macros for common op setup code */
-#define DECL_SETUP(NAME)                                                        \
-    static int fn(NAME)(const SwsOp *op, SwsOpPriv *out)
+#define DECL_SETUP(NAME, PARAMS, OUT)                                           \
+    static int fn(NAME)(const SwsImplParams *PARAMS, SwsImplResult *OUT)
 
-#define SETUP_MEMDUP(c) ff_setup_memdup(&(c), sizeof(c), out)
-static inline int ff_setup_memdup(const void *c, size_t size, SwsOpPriv *out)
+#define SETUP_MEMDUP(c, out) ff_setup_memdup(&(c), sizeof(c), out)
+static inline int ff_setup_memdup(const void *c, size_t size, SwsImplResult *out)
 {
-    out->ptr = av_memdup(c, size);
-    return out->ptr ? 0 : AVERROR(ENOMEM);
+    out->priv.ptr = av_memdup(c, size);
+    out->free = ff_op_priv_free;
+    return out->priv.ptr ? 0 : AVERROR(ENOMEM);
 }
 
 /* Helper macro for declaring op table entries */

@@ -1280,8 +1280,8 @@ static int ebml_parse(MatroskaDemuxContext *matroska,
     MatroskaLevel *level = matroska->num_levels ? &matroska->levels[matroska->num_levels - 1] : NULL;
 
     if (!matroska->current_id) {
-        uint64_t id;
-        res = ebml_read_num(matroska, pb, 4, &id, 0);
+        uint64_t id64;
+        res = ebml_read_num(matroska, pb, 4, &id64, 0);
         if (res < 0) {
             if (pb->eof_reached && res == AVERROR_EOF) {
                 if (matroska->is_live)
@@ -1300,7 +1300,7 @@ static int ebml_parse(MatroskaDemuxContext *matroska,
             }
             return res;
         }
-        matroska->current_id = id | 1 << 7 * res;
+        matroska->current_id = id64 | 1 << 7 * res;
         pos_alt = pos + res;
     } else {
         pos_alt = pos;
@@ -3046,7 +3046,7 @@ static int mkv_parse_video(MatroskaTrack *track, AVStream *st,
     if (track->video.stereo_mode < MATROSKA_VIDEO_STEREOMODE_TYPE_NB &&
         track->video.stereo_mode != MATROSKA_VIDEO_STEREOMODE_TYPE_ANAGLYPH_CYAN_RED &&
         track->video.stereo_mode != MATROSKA_VIDEO_STEREOMODE_TYPE_ANAGLYPH_GREEN_MAG) {
-        int ret = mkv_stereo3d_conv(st, track->video.stereo_mode);
+        ret = mkv_stereo3d_conv(st, track->video.stereo_mode);
         if (ret < 0)
             return ret;
     }
@@ -3938,43 +3938,77 @@ static int matroska_parse_block_additional(MatroskaDemuxContext *matroska,
 
         /* ITU-T T.35 metadata */
         country_code  = bytestream2_get_byteu(&bc);
-        provider_code = bytestream2_get_be16u(&bc);
+        switch (country_code) {
+        case ITU_T_T35_COUNTRY_CODE_US:
+            provider_code = bytestream2_get_be16u(&bc);
 
-        if (country_code != ITU_T_T35_COUNTRY_CODE_US ||
-            provider_code != ITU_T_T35_PROVIDER_CODE_SAMSUNG)
-            break; // ignore
+            switch (provider_code) {
+            case ITU_T_T35_PROVIDER_CODE_SAMSUNG: {
+                provider_oriented_code = bytestream2_get_be16u(&bc);
+                application_identifier = bytestream2_get_byteu(&bc);
 
-        provider_oriented_code = bytestream2_get_be16u(&bc);
-        application_identifier = bytestream2_get_byteu(&bc);
+                if (provider_oriented_code != 1 || application_identifier != 4)
+                    break; // ignore
 
-        if (provider_oriented_code != 1 || application_identifier != 4)
-            break; // ignore
+                hdrplus = av_dynamic_hdr_plus_alloc(&hdrplus_size);
+                if (!hdrplus)
+                    return AVERROR(ENOMEM);
 
-        hdrplus = av_dynamic_hdr_plus_alloc(&hdrplus_size);
-        if (!hdrplus)
-            return AVERROR(ENOMEM);
+                if ((res = av_dynamic_hdr_plus_from_t35(hdrplus, bc.buffer,
+                                                        bytestream2_get_bytes_left(&bc))) < 0 ||
+                    (res = av_packet_add_side_data(pkt, AV_PKT_DATA_DYNAMIC_HDR10_PLUS,
+                                                   (uint8_t *)hdrplus, hdrplus_size)) < 0) {
+                    av_free(hdrplus);
+                    return res;
+                }
 
-        if ((res = av_dynamic_hdr_plus_from_t35(hdrplus, bc.buffer,
-                                                bytestream2_get_bytes_left(&bc))) < 0 ||
-            (res = av_packet_add_side_data(pkt, AV_PKT_DATA_DYNAMIC_HDR10_PLUS,
-                                           (uint8_t *)hdrplus, hdrplus_size)) < 0) {
-            av_free(hdrplus);
-            return res;
+                break;
+            }
+            default:
+                break;
+            }
+            break;
+        case ITU_T_T35_COUNTRY_CODE_UK:
+            bytestream2_skipu(&bc, 1); // t35_uk_country_code_second_octet
+            if (bytestream2_get_bytes_left(&bc) < 2)
+                return AVERROR_INVALIDDATA;
+
+            provider_code = bytestream2_get_be16u(&bc);
+
+            switch (provider_code) {
+            case ITU_T_T35_PROVIDER_CODE_VNOVA: {
+                uint8_t *data;
+                int left = bytestream2_get_bytes_left(&bc);
+
+                if (left < 2)
+                    return AVERROR_INVALIDDATA;
+                data = av_packet_new_side_data(pkt, AV_PKT_DATA_LCEVC, left);
+                if (!data)
+                    return AVERROR(ENOMEM);
+
+                bytestream2_get_bufferu(&bc, data, left);
+
+                return 0;
+            }
+            default:
+                break;
+            }
+            break;
+        default:
+            break;
         }
-
-        return 0;
-    }
-    default:
         break;
     }
-
-    side_data = av_packet_new_side_data(pkt, AV_PKT_DATA_MATROSKA_BLOCKADDITIONAL,
+    default:
+        side_data = av_packet_new_side_data(pkt, AV_PKT_DATA_MATROSKA_BLOCKADDITIONAL,
                                         size + (size_t)8);
-    if (!side_data)
-        return AVERROR(ENOMEM);
+        if (!side_data)
+            return AVERROR(ENOMEM);
 
-    AV_WB64(side_data, id);
-    memcpy(side_data + 8, data, size);
+        AV_WB64(side_data, id);
+        memcpy(side_data + 8, data, size);
+        break;
+    }
 
     return 0;
 }
@@ -4758,8 +4792,8 @@ static int webm_dash_manifest_cues(AVFormatContext *s, int64_t init_range)
     // Store cue point timestamps as a comma separated list
     // for checking subsegment alignment in the muxer.
     av_bprint_init(&bprint, 0, AV_BPRINT_SIZE_UNLIMITED);
-    for (int i = 0; i < sti->nb_index_entries; i++)
-        av_bprintf(&bprint, "%" PRId64",", sti->index_entries[i].timestamp);
+    for (int j = 0; j < sti->nb_index_entries; j++)
+        av_bprintf(&bprint, "%" PRId64",", sti->index_entries[j].timestamp);
     if (!av_bprint_is_complete(&bprint)) {
         av_bprint_finalize(&bprint, NULL);
         return AVERROR(ENOMEM);

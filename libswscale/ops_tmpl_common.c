@@ -85,7 +85,7 @@ DECL_IMPL(clear##_##X##Y##Z##W)                                                 
 }                                                                               \
                                                                                 \
 DECL_ENTRY(clear##_##X##Y##Z##W,                                                \
-    .setup = ff_sws_setup_q4,                                                   \
+    .setup = ff_sws_setup_clear,                                                \
     .op = SWS_OP_CLEAR,                                                         \
     .flexible = true,                                                           \
     .unused = { !X, !Y, !Z, !W },                                               \
@@ -141,13 +141,13 @@ DECL_PATTERN(max)
 
 WRAP_COMMON_PATTERNS(min,
     .op = SWS_OP_MIN,
-    .setup = ff_sws_setup_q4,
+    .setup = ff_sws_setup_clamp,
     .flexible = true,
 );
 
 WRAP_COMMON_PATTERNS(max,
     .op = SWS_OP_MAX,
-    .setup = ff_sws_setup_q4,
+    .setup = ff_sws_setup_clamp,
     .flexible = true,
 );
 
@@ -172,9 +172,151 @@ DECL_PATTERN(scale)
 
 WRAP_COMMON_PATTERNS(scale,
     .op = SWS_OP_SCALE,
-    .setup = ff_sws_setup_q,
+    .setup = ff_sws_setup_scale,
     .flexible = true,
 );
+
+DECL_SETUP(setup_filter_v, params, out)
+{
+    const SwsFilterWeights *filter = params->op->rw.kernel;
+    static_assert(sizeof(out->priv.ptr) <= sizeof(int32_t[2]),
+                  ">8 byte pointers not supported");
+
+    /* Pre-convert weights to float */
+    float *weights = av_calloc(filter->num_weights, sizeof(float));
+    if (!weights)
+        return AVERROR(ENOMEM);
+
+    for (int i = 0; i < filter->num_weights; i++)
+        weights[i] = (float) filter->weights[i] / SWS_FILTER_SCALE;
+
+    out->priv.ptr = weights;
+    out->priv.i32[2] = filter->filter_size;
+    out->free = ff_op_priv_free;
+    return 0;
+}
+
+/* Fully general vertical planar filter case */
+DECL_READ(filter_v, const int elems)
+{
+    const SwsOpExec *exec = iter->exec;
+    const float *restrict weights = impl->priv.ptr;
+    const int filter_size = impl->priv.i32[2];
+    weights += filter_size * iter->y;
+
+    f32block_t xs, ys, zs, ws;
+    memset(xs, 0, sizeof(xs));
+    if (elems > 1)
+        memset(ys, 0, sizeof(ys));
+    if (elems > 2)
+        memset(zs, 0, sizeof(zs));
+    if (elems > 3)
+        memset(ws, 0, sizeof(ws));
+
+    for (int j = 0; j < filter_size; j++) {
+        const float weight = weights[j];
+
+        SWS_LOOP
+        for (int i = 0; i < SWS_BLOCK_SIZE; i++) {
+            xs[i] += weight * in0[i];
+            if (elems > 1)
+                ys[i] += weight * in1[i];
+            if (elems > 2)
+                zs[i] += weight * in2[i];
+            if (elems > 3)
+                ws[i] += weight * in3[i];
+        }
+
+        in0 = bump_ptr(in0, exec->in_stride[0]);
+        if (elems > 1)
+            in1 = bump_ptr(in1, exec->in_stride[1]);
+        if (elems > 2)
+            in2 = bump_ptr(in2, exec->in_stride[2]);
+        if (elems > 3)
+            in3 = bump_ptr(in3, exec->in_stride[3]);
+    }
+
+    for (int i = 0; i < elems; i++)
+        iter->in[i] += sizeof(block_t);
+
+    CONTINUE(f32block_t, xs, ys, zs, ws);
+}
+
+DECL_SETUP(setup_filter_h, params, out)
+{
+    SwsFilterWeights *filter = params->op->rw.kernel;
+    out->priv.ptr = av_refstruct_ref(filter->weights);
+    out->priv.i32[2] = filter->filter_size;
+    out->free = ff_op_priv_unref;
+    return 0;
+}
+
+/* Fully general horizontal planar filter case */
+DECL_READ(filter_h, const int elems)
+{
+    const SwsOpExec *exec = iter->exec;
+    const int *restrict weights = impl->priv.ptr;
+    const int filter_size = impl->priv.i32[2];
+    const float scale = 1.0f / SWS_FILTER_SCALE;
+    const int xpos = iter->x;
+    weights += filter_size * iter->x;
+
+    f32block_t xs, ys, zs, ws;
+    for (int i = 0; i < SWS_BLOCK_SIZE; i++) {
+        const int offset = exec->in_offset_x[xpos + i];
+        pixel_t *start0 = bump_ptr(in0, offset);
+        pixel_t *start1 = bump_ptr(in1, offset);
+        pixel_t *start2 = bump_ptr(in2, offset);
+        pixel_t *start3 = bump_ptr(in3, offset);
+
+        inter_t sx = 0, sy = 0, sz = 0, sw = 0;
+        for (int j = 0; j < filter_size; j++) {
+            const int weight = weights[j];
+            sx += weight * start0[j];
+            if (elems > 1)
+                sy += weight * start1[j];
+            if (elems > 2)
+                sz += weight * start2[j];
+            if (elems > 3)
+                sw += weight * start3[j];
+        }
+
+        xs[i] = (float) sx * scale;
+        if (elems > 1)
+            ys[i] = (float) sy * scale;
+        if (elems > 2)
+            zs[i] = (float) sz * scale;
+        if (elems > 3)
+            ws[i] = (float) sw * scale;
+
+        weights += filter_size;
+    }
+
+    CONTINUE(f32block_t, xs, ys, zs, ws);
+}
+
+#define WRAP_FILTER(FUNC, DIR, ELEMS, SUFFIX)                                   \
+DECL_IMPL(FUNC##ELEMS##SUFFIX)                                                  \
+{                                                                               \
+    CALL_READ(FUNC##SUFFIX, ELEMS);                                             \
+}                                                                               \
+                                                                                \
+DECL_ENTRY(FUNC##ELEMS##SUFFIX,                                                 \
+    .op = SWS_OP_READ,                                                          \
+    .setup = fn(setup_filter##SUFFIX),                                          \
+    .rw.elems = ELEMS,                                                          \
+    .rw.filter = SWS_OP_FILTER_##DIR,                                           \
+);
+
+WRAP_FILTER(filter, V, 1, _v)
+WRAP_FILTER(filter, V, 2, _v)
+WRAP_FILTER(filter, V, 3, _v)
+WRAP_FILTER(filter, V, 4, _v)
+
+WRAP_FILTER(filter, H, 1, _h)
+WRAP_FILTER(filter, H, 2, _h)
+WRAP_FILTER(filter, H, 3, _h)
+WRAP_FILTER(filter, H, 4, _h)
 
 static void fn(process)(const SwsOpExec *exec, const void *priv,
                         const int bx_start, const int y_start,
@@ -186,16 +328,22 @@ static void fn(process)(const SwsOpExec *exec, const void *priv,
 
     SwsOpIter iterdata;
     SwsOpIter *iter = &iterdata; /* for CONTINUE() macro to work */
+    iter->exec = exec;
+    for (int i = 0; i < 4; i++) {
+        iter->in[i]  = (uintptr_t) exec->in[i];
+        iter->out[i] = (uintptr_t) exec->out[i];
+    }
 
     for (iter->y = y_start; iter->y < y_end; iter->y++) {
-        for (int i = 0; i < 4; i++) {
-            iter->in[i]  = exec->in[i]  + (iter->y - y_start) * exec->in_stride[i];
-            iter->out[i] = exec->out[i] + (iter->y - y_start) * exec->out_stride[i];
-        }
-
         for (int block = bx_start; block < bx_end; block++) {
             iter->x = block * SWS_BLOCK_SIZE;
             CONTINUE(block_t, (void *) x, (void *) y, (void *) z, (void *) w);
+        }
+
+        const int y_bump = exec->in_bump_y ? exec->in_bump_y[iter->y] : 0;
+        for (int i = 0; i < 4; i++) {
+            iter->in[i]  += exec->in_bump[i] + y_bump * exec->in_stride[i];
+            iter->out[i] += exec->out_bump[i];
         }
     }
 }

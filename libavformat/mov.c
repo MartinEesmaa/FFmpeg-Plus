@@ -3680,7 +3680,8 @@ static int mov_read_sdtp(MOVContext *c, AVIOContext *pb, MOVAtom atom)
 {
     AVStream *st;
     MOVStreamContext *sc;
-    int64_t i, entries;
+    unsigned int i;
+    int64_t entries;
 
     if (c->fc->nb_streams < 1)
         return 0;
@@ -3698,6 +3699,9 @@ static int mov_read_sdtp(MOVContext *c, AVIOContext *pb, MOVAtom atom)
         av_log(c->fc, AV_LOG_WARNING, "Duplicated SDTP atom\n");
     av_freep(&sc->sdtp_data);
     sc->sdtp_count = 0;
+
+    if (entries < 0 || entries > UINT_MAX)
+        return AVERROR(ERANGE);
 
     sc->sdtp_data = av_malloc(entries);
     if (!sc->sdtp_data)
@@ -4329,7 +4333,12 @@ static void mov_fix_index(MOVContext *mov, AVStream *st)
                st->index, edit_list_index, edit_list_media_time, edit_list_duration);
         edit_list_index++;
         edit_list_dts_counter = edit_list_dts_entry_end;
-        edit_list_dts_entry_end += edit_list_duration;
+        edit_list_dts_entry_end = av_sat_add64(edit_list_dts_entry_end, edit_list_duration);
+        if (edit_list_dts_entry_end == INT64_MAX) {
+            av_log(mov->fc, AV_LOG_ERROR, "Cannot calculate dts entry length with duration %"PRId64"\n",
+                   edit_list_duration);
+            break;
+        }
         num_discarded_begin = 0;
         if (!found_non_empty_edit && edit_list_media_time == -1) {
             empty_edits_sum_duration += edit_list_duration;
@@ -4759,7 +4768,8 @@ static void mov_build_index(MOVContext *mov, AVStream *st)
 
         if (!multiple_edits && !mov->advanced_editlist &&
             st->codecpar->codec_id == AV_CODEC_ID_AAC && start_time > 0)
-            sc->start_pad = start_time;
+            sc->start_pad = av_rescale_q(start_time, st->time_base,
+                    (AVRational){1, st->codecpar->sample_rate});
     }
 
     /* only use old uncompressed audio chunk demuxing when stts specifies it */
@@ -10782,7 +10792,8 @@ static AVStream *mov_find_reference_track(AVFormatContext *s, AVStream *st,
         return NULL;
 
     for (int i = first_index; i < s->nb_streams; i++)
-        if (s->streams[i]->id == sc->tref_id)
+        if (s->streams[i]->index != st->index &&
+            s->streams[i]->id == sc->tref_id)
             return s->streams[i];
 
     return NULL;
@@ -10791,6 +10802,10 @@ static AVStream *mov_find_reference_track(AVFormatContext *s, AVStream *st,
 static int mov_parse_lcevc_streams(AVFormatContext *s)
 {
     int err;
+
+    // Don't try to add a group if there's only one track
+    if (s->nb_streams <= 1)
+        return 0;
 
     for (int i = 0; i < s->nb_streams; i++) {
         AVStreamGroup *stg;
@@ -10820,8 +10835,12 @@ static int mov_parse_lcevc_streams(AVFormatContext *s)
             j = st_base->index + 1;
         }
         if (!j) {
-            av_log(s, AV_LOG_ERROR, "Failed to find base stream for enhancement stream\n");
-            return AVERROR_INVALIDDATA;
+            int loglevel = (s->error_recognition & AV_EF_EXPLODE) ? AV_LOG_ERROR : AV_LOG_WARNING;
+            av_log(s, loglevel, "Failed to find base stream for LCEVC stream\n");
+            ff_remove_stream_group(s, stg);
+            if (s->error_recognition & AV_EF_EXPLODE)
+                return AVERROR_INVALIDDATA;
+            continue;
         }
 
         err = avformat_stream_group_add_stream(stg, st);
@@ -11792,7 +11811,7 @@ const FFInputFormat ff_mov_demuxer = {
     .p.name         = "mov,mp4,m4a,3gp,3g2,mj2",
     .p.long_name    = NULL_IF_CONFIG_SMALL("QuickTime / MOV"),
     .p.priv_class   = &mov_class,
-    .p.extensions   = "mov,mp4,m4a,3gp,3g2,mj2,psp,m4b,ism,ismv,isma,f4v,avif,heic,heif",
+    .p.extensions   = "mov,mp4,m4a,3gp,3g2,mj2,psp,m4v,m4b,ism,ismv,isma,f4v,avif,heic,heif",
     .p.flags        = AVFMT_NO_BYTE_SEEK | AVFMT_SEEK_TO_PTS | AVFMT_SHOW_IDS,
     .priv_data_size = sizeof(MOVContext),
     .flags_internal = FF_INFMT_FLAG_INIT_CLEANUP,

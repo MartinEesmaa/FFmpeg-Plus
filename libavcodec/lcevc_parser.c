@@ -25,6 +25,8 @@
 #include "get_bits.h"
 #include "h2645_parse.h"
 #include "lcevc.h"
+#include "lcevc_parse.h"
+#include "lcevctab.h"
 #include "parser.h"
 #include "parser_internal.h"
 
@@ -81,41 +83,6 @@ static const enum AVPixelFormat pix_fmts[4][4] = {
       AV_PIX_FMT_YUV422P14, AV_PIX_FMT_YUV444P14, },
 };
 
-static const struct {
-    int width;
-    int height;
-} resolution_type_lut[63] = {
-    { 0, 0},
-    { 360,  200 },  { 400,  240 },  { 480,  320 },  { 640,  360 },
-    { 640,  480 },  { 768,  480 },  { 800,  600 },  { 852,  480 },
-    { 854,  480 },  { 856,  480 },  { 960,  540 },  { 960,  640 },
-    { 1024, 576 },  { 1024, 600 },  { 1024, 768 },  { 1152, 864 },
-    { 1280, 720 },  { 1280, 800 },  { 1280, 1024 }, { 1360, 768 },
-    { 1366, 768 },  { 1920, 1200 }, { 2048, 1080 }, { 2048, 1152 },
-    { 2048, 1536 }, { 2160, 1440 }, { 2560, 1440 }, { 2560, 1600 },
-    { 2560, 2048 }, { 3200, 1800 }, { 3200, 2048 }, { 3200, 2400 },
-    { 3440, 1440 }, { 3840, 1600 }, { 3840, 2160 }, { 3840, 2400 },
-    { 4096, 2160 }, { 4096, 3072 }, { 5120, 2880 }, { 5120, 3200 },
-    { 5120, 4096 }, { 6400, 4096 }, { 6400, 4800 }, { 7680, 4320 },
-    { 7680, 4800 },
-};
-
-static inline uint64_t get_mb(GetBitContext *s) {
-    int more, i = 0;
-    uint64_t mb = 0;
-
-    do {
-        int byte = get_bits(s, 8);
-        unsigned bits = byte & 0x7f;
-        more = byte & 0x80;
-        mb = (mb << 7) | bits;
-        if (++i == 10)
-            break;
-    } while (more);
-
-    return mb;
-}
-
 static int parse_nal_unit(AVCodecParserContext *s, AVCodecContext *avctx,
                           const H2645NAL *nal)
 {
@@ -125,10 +92,13 @@ static int parse_nal_unit(AVCodecParserContext *s, AVCodecContext *avctx,
 
     while (bytestream2_get_bytes_left(&gbc) > 1) {
         GetBitContext gb;
-        int payload_size_type, payload_type, payload_size;
+        uint64_t payload_size;
+        int payload_size_type, payload_type;
         int block_size;
 
-        init_get_bits8(&gb, gbc.buffer, bytestream2_get_bytes_left(&gbc));
+        int ret = init_get_bits8(&gb, gbc.buffer, bytestream2_get_bytes_left(&gbc));
+        if (ret < 0)
+            return ret;
 
         payload_size_type = get_bits(&gb, 3);
         payload_type      = get_bits(&gb, 5);
@@ -137,6 +107,9 @@ static int parse_nal_unit(AVCodecParserContext *s, AVCodecContext *avctx,
             return AVERROR_PATCHWELCOME;
         if (payload_size_type == 7)
             payload_size = get_mb(&gb);
+
+        if (payload_size > INT_MAX - (get_bits_count(&gb) >> 3))
+            return AVERROR_INVALIDDATA;
 
         block_size = payload_size + (get_bits_count(&gb) >> 3);
         if (block_size >= bytestream2_get_bytes_left(&gbc))
@@ -161,8 +134,8 @@ static int parse_nal_unit(AVCodecParserContext *s, AVCodecContext *avctx,
             s->format = pix_fmts[bit_depth][chroma_format_idc];
 
             if (resolution_type < 63) {
-                s->width  = resolution_type_lut[resolution_type].width;
-                s->height = resolution_type_lut[resolution_type].height;
+                s->width  = ff_lcevc_resolution_type[resolution_type].width;
+                s->height = ff_lcevc_resolution_type[resolution_type].height;
             } else {
                 int upsample_type, tile_dimensions_type;
                 int temporal_step_width_modifier_signalled_flag, level1_filtering_signalled_flag;
