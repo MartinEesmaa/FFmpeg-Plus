@@ -4561,7 +4561,7 @@ mkdir -p ffbuild
 if test -f configure; then
     source_path=.
 elif test -f src/configure; then
-    source_path=src
+    source_path=./src
 else
     source_path=$(cd $(dirname "$0"); pwd)
     case "$source_path" in
@@ -6400,7 +6400,7 @@ link_name=$(mktemp -u $TMPDIR/name_XXXXXXXX)
 mkdir "$link_dest"
 $ln_s "$link_dest" "$link_name"
 touch "$link_dest/test_file"
-if [ "$source_path" != "." ] && [ "$source_path" != "src" ] && ([ ! -d src ] || [ -L src ]) && [ -e "$link_name/test_file" ]; then
+if [ "$source_path" != "." ] && [ "$source_path" != "./src" ] && ([ ! -d src ] || [ -L src ]) && [ -e "$link_name/test_file" ]; then
     # create link to source path
     [ -e src ] && rm src
     $ln_s "$source_path" src
@@ -8000,6 +8000,15 @@ check_warning -Wempty-body
 # This roughly matches the default thread stack size on Musl, which is 128 KiB,
 # leaving some headroom for caller frames.
 check_warning -Wstack-usage=122880
+
+# GCC accepts warning option level 5 here to warn about all fallthroughs
+# that are not explicitly marked with the appropriate attribute
+if enabled gcc; then
+    check_warning -Wimplicit-fallthrough=5
+else
+    check_warning -Wimplicit-fallthrough
+fi
+
 check_c_warning -Wmissing-prototypes
 check_c_warning -Wstrict-prototypes
 check_c_warning -Wunterminated-string-initialization

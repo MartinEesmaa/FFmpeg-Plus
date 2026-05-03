@@ -47,6 +47,10 @@ FATE_LIBAVUTIL += fate-bprint
 fate-bprint: libavutil/tests/bprint$(EXESUF)
 fate-bprint: CMD = run libavutil/tests/bprint$(EXESUF)
 
+FATE_LIBAVUTIL += fate-buffer
+fate-buffer: libavutil/tests/buffer$(EXESUF)
+fate-buffer: CMD = run libavutil/tests/buffer$(EXESUF)
+
 FATE_LIBAVUTIL += fate-cpu
 fate-cpu: libavutil/tests/cpu$(EXESUF)
 fate-cpu: CMD = runecho libavutil/tests/cpu$(EXESUF) $(CPUFLAGS:%=-c%) $(THREADS:%=-t%)
@@ -98,6 +102,10 @@ fate-film_grain_params: CMD = run libavutil/tests/film_grain_params$(EXESUF)
 FATE_LIBAVUTIL += fate-hash
 fate-hash: libavutil/tests/hash$(EXESUF)
 fate-hash: CMD = run libavutil/tests/hash$(EXESUF)
+
+FATE_LIBAVUTIL += fate-hdr_dynamic_vivid_metadata
+fate-hdr_dynamic_vivid_metadata: libavutil/tests/hdr_dynamic_vivid_metadata$(EXESUF)
+fate-hdr_dynamic_vivid_metadata: CMD = run libavutil/tests/hdr_dynamic_vivid_metadata$(EXESUF)
 
 FATE_LIBAVUTIL += fate-hmac
 fate-hmac: libavutil/tests/hmac$(EXESUF)
@@ -180,6 +188,10 @@ FATE_LIBAVUTIL += fate-stereo3d
 fate-stereo3d: libavutil/tests/stereo3d$(EXESUF)
 fate-stereo3d: CMD = run libavutil/tests/stereo3d$(EXESUF)
 
+FATE_LIBAVUTIL += fate-tdrdi
+fate-tdrdi: libavutil/tests/tdrdi$(EXESUF)
+fate-tdrdi: CMD = run libavutil/tests/tdrdi$(EXESUF)
+
 FATE_LIBAVUTIL += fate-tree
 fate-tree: libavutil/tests/tree$(EXESUF)
 fate-tree: CMD = run libavutil/tests/tree$(EXESUF)
@@ -219,6 +231,10 @@ fate-file: CMP = null
 FATE_LIBAVUTIL += fate-timecode
 fate-timecode: libavutil/tests/timecode$(EXESUF)
 fate-timecode: CMD = run libavutil/tests/timecode$(EXESUF)
+
+FATE_LIBAVUTIL += fate-timestamp
+fate-timestamp: libavutil/tests/timestamp$(EXESUF)
+fate-timestamp: CMD = run libavutil/tests/timestamp$(EXESUF)
 
 FATE_LIBAVUTIL += $(FATE_LIBAVUTIL-yes)
 FATE-$(CONFIG_AVUTIL) += $(FATE_LIBAVUTIL)

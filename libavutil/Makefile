@@ -264,6 +264,7 @@ TESTPROGS = adler32                                                     \
             base64                                                      \
             blowfish                                                    \
             bprint                                                      \
+            buffer                                                      \
             cast5                                                       \
             camellia                                                    \
             channel_layout                                              \
@@ -281,6 +282,7 @@ TESTPROGS = adler32                                                     \
             fifo                                                        \
             film_grain_params                                           \
             hash                                                        \
+            hdr_dynamic_vivid_metadata                                  \
             hmac                                                        \
             hwdevice                                                    \
             integer                                                     \
@@ -308,7 +310,9 @@ TESTPROGS = adler32                                                     \
             softfloat                                                   \
             spherical                                                   \
             stereo3d                                                    \
+            tdrdi                                                       \
             timecode                                                    \
+            timestamp                                                   \
             tree                                                        \
             twofish                                                     \
             utf8                                                        \
