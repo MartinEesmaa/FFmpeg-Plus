@@ -13,6 +13,10 @@ fate-aes_ctr: libavutil/tests/aes_ctr$(EXESUF)
 fate-aes_ctr: CMD = run libavutil/tests/aes_ctr$(EXESUF)
 fate-aes_ctr: CMP = null
 
+FATE_LIBAVUTIL += fate-ambient_viewing_environment
+fate-ambient_viewing_environment: libavutil/tests/ambient_viewing_environment$(EXESUF)
+fate-ambient_viewing_environment: CMD = run libavutil/tests/ambient_viewing_environment$(EXESUF)
+
 FATE_LIBAVUTIL += fate-camellia
 fate-camellia: libavutil/tests/camellia$(EXESUF)
 fate-camellia: CMD = run libavutil/tests/camellia$(EXESUF)
@@ -68,6 +72,10 @@ fate-crc: CMD = run libavutil/tests/crc$(EXESUF)
 FATE_LIBAVUTIL += fate-color_utils
 fate-color_utils: libavutil/tests/color_utils$(EXESUF)
 fate-color_utils: CMD = run libavutil/tests/color_utils$(EXESUF)
+
+FATE_LIBAVUTIL += fate-csp
+fate-csp: libavutil/tests/csp$(EXESUF)
+fate-csp: CMD = run libavutil/tests/csp$(EXESUF)
 
 FATE_LIBAVUTIL += fate-des
 fate-des: libavutil/tests/des$(EXESUF)
