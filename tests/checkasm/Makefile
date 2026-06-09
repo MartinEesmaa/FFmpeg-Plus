@@ -1,3 +1,5 @@
+ifeq ($(CONFIG_CHECKASM),yes)
+
 # libavcodec tests
 # subsystems
 AVCODECOBJS-$(CONFIG_AC3DSP)            += ac3dsp.o
@@ -106,26 +108,61 @@ AVUTILOBJS-$(CONFIG_PIXELUTILS)         += pixelutils.o
 
 CHECKASMOBJS-$(CONFIG_AVUTIL)  += $(AVUTILOBJS) $(AVUTILOBJS-yes)
 
-CHECKASMOBJS-$(ARCH_AARCH64)            += aarch64/checkasm.o
-CHECKASMOBJS-$(HAVE_ARMV5TE_EXTERNAL)   += arm/checkasm.o
-CHECKASMOBJS-$(HAVE_RV)                 += riscv/checkasm.o
-CHECKASMOBJS-$(HAVE_X86ASM)             += x86/checkasm.o
+EXT_CHECKASMOBJS-$(ARCH_AARCH64)            += ext/src/arm/checkasm_64.o
+EXT_CHECKASMOBJS-$(ARCH_ARM)                += ext/src/arm/checkasm_32.o
+EXT_CHECKASMOBJS-$(ARCH_LOONGARCH)          += ext/src/loongarch/checkasm.o
+EXT_CHECKASMOBJS-$(HAVE_RV)                 += ext/src/riscv/callcheck.o
+EXT_CHECKASMOBJS-$(HAVE_X86ASM)             += ext/src/x86/checkasm.o
 
-CHECKASMOBJS += $(CHECKASMOBJS-yes) checkasm.o
+EXT_CHECKASMOBJS += ext/src/arm/cpu.o                  \
+                    ext/src/checkasm.o                 \
+                    ext/src/cpu.o                      \
+                    ext/src/function.o                 \
+                    ext/src/perf.o                     \
+                    ext/src/perf/arm.o                 \
+                    ext/src/perf/linux.o               \
+                    ext/src/perf/macos_kperf.o         \
+                    ext/src/riscv/cpu.o                \
+                    ext/src/signal.o                   \
+                    ext/src/stackguard.o               \
+                    ext/src/stats.o                    \
+                    ext/src/utils.o                    \
+                    ext/src/x86/cpu.o                  \
+
+EXT_CHECKASMOBJS += $(EXT_CHECKASMOBJS-yes)
+$(EXT_CHECKASMOBJS:%=tests/checkasm/%): CFLAGS      += -I$(SRC_PATH)/tests/checkasm/ext/src
+$(EXT_CHECKASMOBJS:%=tests/checkasm/%): ASFLAGS     += -I$(SRC_PATH)/tests/checkasm/ext/src
+$(EXT_CHECKASMOBJS:%=tests/checkasm/%): X86ASMFLAGS += -I$(SRC_PATH)/tests/checkasm/ext/src
+
+CHECKASMOBJS += $(CHECKASMOBJS-yes) checkasm.o $(EXT_CHECKASMOBJS)
 CHECKASMOBJS := $(sort $(CHECKASMOBJS:%=tests/checkasm/%))
 
 -include $(CHECKASMOBJS:.o=.d)
 
 CHECKASMDIRS := $(sort $(dir $(CHECKASMOBJS)))
 $(CHECKASMOBJS): | $(CHECKASMDIRS)
+# Prepend the local checkasm include path before any potential external
+# (possibly outdated) version of libcheckasm.
+$(CHECKASMOBJS): CFLAGS  := -I$(SRC_PATH)/tests/checkasm/ext/include $(CFLAGS)
+$(CHECKASMOBJS): ASFLAGS := -I$(SRC_PATH)/tests/checkasm/ext/include $(ASFLAGS)
 OUTDIRS += $(CHECKASMDIRS)
+
+# Expose checkasm_config_header_generated.h to checkasm tests as well, as it
+# modifies the behavior of include/checkasm/header_config.h
+$(CHECKASMOBJS): CFLAGS      += -DCHECKASM_HAVE_HEADER_GENERATED_H
+$(CHECKASMOBJS): ASFLAGS     += -DCHECKASM_HAVE_HEADER_GENERATED_H
+
+# Expose checkasm_config_generated.h/asm only to checkasm itself.
+$(EXT_CHECKASMOBJS:%=tests/checkasm/%): CFLAGS      += -DCHECKASM_HAVE_GENERATED_H
+$(EXT_CHECKASMOBJS:%=tests/checkasm/%): ASFLAGS     += -DCHECKASM_HAVE_GENERATED_H
+$(EXT_CHECKASMOBJS:%=tests/checkasm/%): X86ASMFLAGS += -DCHECKASM_HAVE_GENERATED_H
 
 tests/checkasm/checkasm.o: CFLAGS += -Umain
 
 CHECKASM := tests/checkasm/checkasm$(EXESUF)
 
 $(CHECKASM): $(CHECKASMOBJS) $(FF_STATIC_DEP_LIBS)
-	$(call LINK,$(LDFLAGS) $(LDEXEFLAGS) $(LD_O) $(CHECKASMOBJS) $(FF_STATIC_DEP_LIBS) $(EXTRALIBS-avcodec) $(EXTRALIBS-avfilter) $(EXTRALIBS-avformat) $(EXTRALIBS-avutil) $(EXTRALIBS-swresample) $(EXTRALIBS))
+	$(call LINK,$(LDFLAGS) $(LDEXEFLAGS) $(LD_O) $(CHECKASMOBJS) $(FF_STATIC_DEP_LIBS) $(EXTRALIBS-avcodec) $(EXTRALIBS-avfilter) $(EXTRALIBS-avformat) $(EXTRALIBS-avutil) $(EXTRALIBS-swresample) $(EXTRALIBS) $(EXTRALIBS-checkasm))
 
 run-checkasm: $(CHECKASM)
 run-checkasm:
@@ -136,6 +173,8 @@ checkasm: $(CHECKASM)
 testclean:: checkasmclean
 
 checkasmclean:
-	$(RM) $(CHECKASM) $(CLEANSUFFIXES:%=tests/checkasm/%) $(CLEANSUFFIXES:%=tests/checkasm/$(ARCH)/%)
+	$(RM) $(CHECKASM) $(CLEANSUFFIXES:%=tests/checkasm/%) $(CLEANSUFFIXES:%=tests/checkasm/$(ARCH)/%) $(CHECKASMOBJS)
 
 .PHONY: checkasm
+
+endif # CONFIG_CHECKASM

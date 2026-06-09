@@ -111,6 +111,7 @@ Configuration options:
   --disable-unstable       disable building optional unstable / experimental code
   --disable-all            disable building components, libraries and programs
   --disable-autodetect     disable automatically detected external libraries [no]
+  --disable-checkasm       disable building the checkasm test binary [no]
 
 Program options:
   --disable-programs       do not build command line programs
@@ -2204,6 +2205,7 @@ HWACCEL_AUTODETECT_LIBRARY_LIST="
 
 # catchall list of things that require external libs to link
 EXTRALIBS_LIST="
+    checkasm
     cpu_init
     cws2fws
 "
@@ -2232,6 +2234,7 @@ DOCUMENT_LIST="
 "
 
 FEATURE_LIST="
+    checkasm
     ftrapv
     gray
     hardcoded_tables
@@ -2588,6 +2591,7 @@ SYSTEM_FUNCS="
     glXGetProcAddress
     gmtime_r
     inet_aton
+    ioctl
     isatty
     kbhit
     localtime_r
@@ -2605,6 +2609,7 @@ SYSTEM_FUNCS="
     prctl
     pthread_cancel
     pthread_set_name_np
+    pthread_setaffinity_np
     pthread_setname_np
     sched_getaffinity
     SecItemImport
@@ -2613,6 +2618,8 @@ SYSTEM_FUNCS="
     SetDllDirectory
     setmode
     setrlimit
+    sigaction
+    siglongjmp
     Sleep
     strerror_r
     sysconf
@@ -2812,6 +2819,7 @@ CONFIG_EXTRA="
     intrax8
     iso_media
     iso_writer
+    itut_t35
     ividsp
     jpegtables
     lgplv3
@@ -3115,6 +3123,7 @@ iamfenc_deps="iamf"
 inflate_wrapper_deps="zlib"
 intrax8_select="blockdsp wmv2dsp"
 iso_media_select="mpeg4audio"
+itut_t35_select="atsc_a53 dovi_rpudec"
 me_cmp_select="idctdsp"
 mpeg_er_select="error_resilience"
 mpegaudio_select="mpegaudiodsp mpegaudioheader"
@@ -3170,7 +3179,7 @@ asv2_encoder_select="aandcttables bswapdsp fdctdsp pixblockdsp"
 atrac1_decoder_select="sinewin"
 atrac3p_decoder_select="sinewin"
 atrac3pal_decoder_select="sinewin"
-av1_decoder_select="atsc_a53 cbs_av1 dovi_rpudec"
+av1_decoder_select="cbs_av1 itut_t35"
 bink_decoder_select="blockdsp hpeldsp"
 binkaudio_dct_decoder_select="wma_freqs"
 binkaudio_rdft_decoder_select="wma_freqs"
@@ -3775,6 +3784,7 @@ av1_frame_merge_bsf_select="cbs_av1"
 av1_frame_split_bsf_select="cbs_av1"
 av1_metadata_bsf_select="cbs_av1"
 dovi_rpu_bsf_select="cbs_h265 cbs_av1 dovi_rpudec dovi_rpuenc"
+dovi_split_bsf_select="hevcparse"
 dts2pts_bsf_select="cbs_h264 h264parse cbs_h265 hevc_parser"
 eac3_core_bsf_select="ac3_parser"
 eia608_to_smpte436m_bsf_select="smpte_436m"
@@ -3835,6 +3845,7 @@ hevc_videotoolbox_encoder_select="atsc_a53 videotoolbox_encoder"
 prores_videotoolbox_encoder_deps="pthreads"
 prores_videotoolbox_encoder_select="videotoolbox_encoder"
 libaom_av1_decoder_deps="libaom"
+libaom_av1_decoder_select="itut_t35"
 libaom_av1_encoder_deps="libaom"
 libaom_av1_encoder_select="extract_extradata_bsf dovi_rpuenc"
 libaribb24_decoder_deps="libaribb24"
@@ -3843,7 +3854,7 @@ libcelt_decoder_deps="libcelt"
 libcodec2_decoder_deps="libcodec2"
 libcodec2_encoder_deps="libcodec2"
 libdav1d_decoder_deps="libdav1d"
-libdav1d_decoder_select="atsc_a53 dovi_rpudec"
+libdav1d_decoder_select="itut_t35"
 libdavs2_decoder_deps="libdavs2"
 libdavs2_decoder_select="avs2_parser"
 libfdk_aac_decoder_deps="libfdk_aac"
@@ -4136,6 +4147,7 @@ schannel_conflict="openssl gnutls libtls mbedtls"
 sctp_protocol_deps="struct_sctp_event_subscribe struct_msghdr_msg_flags"
 sctp_protocol_select="network"
 securetransport_conflict="openssl gnutls libtls mbedtls"
+shared_protocol_deps="mmap stdatomic unistd_h"
 srtp_protocol_select="rtp_protocol srtp"
 tcp_protocol_select="network"
 tls_protocol_deps_any="gnutls openssl schannel securetransport libtls mbedtls"
@@ -4378,6 +4390,7 @@ vaapi_transcode_example_deps="avcodec avformat avutil h264_vaapi_encoder"
 qsv_transcode_example_deps="avcodec avformat avutil h264_qsv_encoder"
 
 # EXTRALIBS_LIST
+checkasm_extralibs="advapi32_extralibs pthreads_extralibs"
 cpu_init_extralibs="pthreads_extralibs"
 cws2fws_extralibs="zlib_extralibs"
 
@@ -4485,6 +4498,7 @@ enable stripping
 enable version_tracking
 
 enable asm
+enable checkasm
 enable debug
 enable doc
 enable faan faandct faanidct
@@ -5236,6 +5250,7 @@ msvc_common_flags(){
             -LARGEADDRESSAWARE)   echo $flag ;;
             -L*) [ "$_flags_type" != "link" ] || echo -libpath:${flag#-L} ;;
             -I*) [ "$_flags_type" = "link" ] || echo $flag ;;
+            -D*) [ "$_flags_type" = "link" ] || echo $flag ;;
             -Wl,*)                ;;
             *)                    echo $flag ;;
         esac
@@ -7032,7 +7047,10 @@ check_func_headers conio.h kbhit
 check_func_headers io.h setmode
 check_func_headers lzo/lzo1x.h lzo1x_999_compress
 check_func_headers mach/mach_time.h mach_absolute_time
+check_func_headers setjmp.h siglongjmp
+check_func_headers signal.h sigaction
 check_func_headers stdlib.h getenv
+check_func_headers sys/ioctl.h ioctl
 check_func_headers sys/stat.h lstat
 check_func_headers sys/auxv.h getauxval
 check_func_headers sys/auxv.h elf_aux_info
@@ -7288,6 +7306,9 @@ if ! disabled pthreads && ! enabled w32threads && ! enabled os2threads; then
         fi
         check_lib pthread_set_name_np "$hdrs" pthread_set_name_np -lpthread
         check_lib pthread_setname_np "$hdrs" pthread_setname_np -lpthread
+        # _GNU_SOURCE gets defined locally in checkasm where
+        # pthread_setaffinity_np gets used.
+        check_lib pthread_setaffinity_np "$hdrs" pthread_setaffinity_np -lpthread -D_GNU_SOURCE
     fi
 fi
 
@@ -7930,7 +7951,7 @@ if enabled x86; then
     esac
 elif enabled_any aarch64 ppc64 && ! enabled bigendian; then
     case $target_os in
-        linux)
+        linux|mingw32*|mingw64*|win32|win64)
             ;;
         *)
             disable ffnvcodec cuvid nvdec nvenc
@@ -8198,8 +8219,8 @@ elif enabled gcc; then
     enabled extra_warnings || check_disable_warning -Wno-maybe-uninitialized
     if enabled x86_32; then
         case $target_os in
-        *bsd*)
-            # BSDs don't guarantee a 16 byte aligned stack, but we can
+        *bsd*|mingw*|win*|cygwin*)
+            # These targets don't guarantee a 16 byte aligned stack, but we can
             # request GCC to try to maintain 16 byte alignment throughout
             # function calls. Library entry points that might call assembly
             # functions align the stack. (The parameter means 2^4 bytes.)
@@ -8884,6 +8905,79 @@ echo "endif # FFMPEG_CONFIG_MAK" >> ffbuild/config.mak
 
 cp_if_changed $TMPH config_components.h
 enabled x86asm && cp_if_changed $TMPASM config_components.asm
+
+if enabled checkasm; then
+
+    # Reopen a new TMPH for checkasm_config_generated.h
+    cat > $TMPH <<EOF
+/* Automatically generated by configure - do not modify! */
+#ifndef FFMPEG_CHECKASM_CONFIG_GENERATED_H
+#define FFMPEG_CHECKASM_CONFIG_GENERATED_H
+
+#define CHECKASM_VERSION "1.2.0"
+EOF
+
+    print_config HAVE_ "$TMPH" elf_aux_info getauxval ioctl isatty linux_perf pthread_np_h pthread_setaffinity_np sigaction siglongjmp clock_gettime prctl stdbit_h
+
+    if enabled aarch64; then
+        print_config HAVE_ "$TMPH" as_archext_sve_directive sve
+        print_config HAVE_ "$TMPH" as_archext_sme_directive sme
+    elif enabled riscv; then
+        print_config HAVE_ "$TMPH" sys_hwprobe_h asm_hwprobe_h
+    fi
+
+    cat >> $TMPH <<EOF
+#endif /* FFMPEG_CHECKASM_CONFIG_GENERATED_H */
+EOF
+
+    cp_if_changed $TMPH checkasm_config_generated.h
+
+    # Reopen a new TMPH for checkasm_config_generated.h
+    cat > $TMPH <<EOF
+/* Automatically generated by configure - do not modify! */
+#ifndef FFMPEG_CHECKASM_HEADER_CONFIG_GENERATED_H
+#define FFMPEG_CHECKASM_HEADER_CONFIG_GENERATED_H
+
+EOF
+
+    print_config CHECKASM_ARCH_ "$TMPH" $ARCH_LIST
+
+    # The callcheck harness requires x86asm/rv support on these platforms, so
+    # override arch-autodetection in the header to avoid tests depending on them
+    if enabled x86 && disabled x86asm; then
+        cat >> $TMPH <<EOF
+#undef CHECKASM_ARCH_X86
+#undef CHECKASM_ARCH_X86_32
+#undef CHECKASM_ARCH_X86_64
+#define CHECKASM_ARCH_X86 0
+EOF
+    fi
+
+    if enabled riscv && disabled rv; then
+        cat >> $TMPH <<EOF
+#undef CHECKASM_ARCH_RISCV
+#define CHECKASM_ARCH_RISCV 0
+EOF
+    fi
+
+    cat >> $TMPH <<EOF
+#endif /* FFMPEG_CHECKASM_HEADER_CONFIG_GENERATED_H */
+EOF
+
+    cp_if_changed $TMPH checkasm_header_config_generated.h
+
+    if enabled x86asm; then
+        append config_files $TMPASM
+        cat > $TMPASM <<EOF
+; Automatically generated by configure - do not modify!
+EOF
+        # We pass -DPREFIX on the command line when necessary; we don't need
+        # to include it in the generated config header.
+        print_config "" "$TMPASM" pic
+        cp_if_changed $TMPASM checkasm_config_generated.asm
+    fi
+
+fi # enabled checkasm
 
 cat > $TMPH <<EOF
 /* Generated by ffmpeg configure */

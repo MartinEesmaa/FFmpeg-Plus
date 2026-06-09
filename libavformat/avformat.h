@@ -1065,19 +1065,32 @@ typedef struct AVStreamGroupTileGrid {
 } AVStreamGroupTileGrid;
 
 /**
- * AVStreamGroupLCEVC is meant to define the relation between video streams
- * and a data stream containing LCEVC enhancement layer NALUs.
+ * AVStreamGroupLayeredVideo is meant to define the relation between a base
+ * layer video stream and a separate enhancement layer stream that together
+ * form a single layered video presentation (for example a video stream and a
+ * data stream containing LCEVC enhancement layer NALUs, or Dolby Vision
+ * Profile 7 dual-layer encoding).
  *
- * No more than one stream of
- * @ref AVCodecParameters.codec_id "codec_id" AV_CODEC_ID_LCEVC shall be present.
+ * The enhancement layer stream is identified by @ref el_index.
  */
-typedef struct AVStreamGroupLCEVC {
+typedef struct AVStreamGroupLayeredVideo {
     const AVClass *av_class;
 
     /**
-     * Index of the LCEVC data stream in AVStreamGroup.
+     * Index of the enhancement layer stream in AVStreamGroup.
      */
-    unsigned int lcevc_index;
+#if FF_API_LCEVC_STRUCT
+    union {
+#endif
+        unsigned int el_index;
+#if FF_API_LCEVC_STRUCT
+        /**
+         * Alias for @ref el_index, kept for backward compatibility.
+         */
+        attribute_deprecated
+        unsigned int lcevc_index;
+    };
+#endif
     /**
      * Width of the final stream for presentation.
      */
@@ -1086,7 +1099,16 @@ typedef struct AVStreamGroupLCEVC {
      * Height of the final image for presentation.
      */
     int height;
-} AVStreamGroupLCEVC;
+} AVStreamGroupLayeredVideo;
+
+#if FF_API_LCEVC_STRUCT
+/**
+ * Alias kept for backward compatibility.
+ *
+ * AVStreamGroupLCEVC was renamed to @ref AVStreamGroupLayeredVideo.
+ */
+#define AVStreamGroupLCEVC AVStreamGroupLayeredVideo
+#endif
 
 /**
  * AVStreamGroupTREF is meant to define the relation between video, audio,
@@ -1111,6 +1133,7 @@ enum AVStreamGroupParamsType {
     AV_STREAM_GROUP_PARAMS_TILE_GRID,
     AV_STREAM_GROUP_PARAMS_LCEVC,
     AV_STREAM_GROUP_PARAMS_TREF,
+    AV_STREAM_GROUP_PARAMS_DOLBY_VISION,
 };
 
 struct AVIAMFAudioElement;
@@ -1152,7 +1175,14 @@ typedef struct AVStreamGroup {
         struct AVIAMFAudioElement *iamf_audio_element;
         struct AVIAMFMixPresentation *iamf_mix_presentation;
         struct AVStreamGroupTileGrid *tile_grid;
+        struct AVStreamGroupLayeredVideo *layered_video;
+#if FF_API_LCEVC_STRUCT
+        /**
+         * deprecated, use layered_video.
+         */
+        attribute_deprecated
         struct AVStreamGroupLCEVC *lcevc;
+#endif
         struct AVStreamGroupTREF *tref;
     } params;
 

@@ -102,13 +102,14 @@ void ff_free_stream_group(AVStreamGroup **pstg)
                                  &stg->params.tile_grid->nb_coded_side_data);
         av_freep(&stg->params.tile_grid);
         break;
-    case AV_STREAM_GROUP_PARAMS_LCEVC:
-        av_opt_free(stg->params.lcevc);
-        av_freep(&stg->params.lcevc);
-        break;
     case AV_STREAM_GROUP_PARAMS_TREF:
         av_opt_free(stg->params.tref);
         av_freep(&stg->params.tref);
+        break;
+    case AV_STREAM_GROUP_PARAMS_LCEVC:
+    case AV_STREAM_GROUP_PARAMS_DOLBY_VISION:
+        av_opt_free(stg->params.layered_video);
+        av_freep(&stg->params.layered_video);
         break;
     default:
         break;
@@ -269,6 +270,7 @@ const char *avformat_stream_group_name(enum AVStreamGroupParamsType type)
     case AV_STREAM_GROUP_PARAMS_TILE_GRID:                 return "Tile Grid";
     case AV_STREAM_GROUP_PARAMS_LCEVC:                     return "LCEVC (Split video and enhancement)";
     case AV_STREAM_GROUP_PARAMS_TREF:                      return "Track Reference";
+    case AV_STREAM_GROUP_PARAMS_DOLBY_VISION:              return "Dolby Vision (Split base and enhancement layer)";
     }
     return NULL;
 }

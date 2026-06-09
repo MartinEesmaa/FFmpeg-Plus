@@ -28,6 +28,7 @@
 #include "ops.h"
 #include "ops_internal.h"
 #include "ops_dispatch.h"
+#include "swscale_internal.h"
 
 typedef struct SwsOpPass {
     SwsCompiledOp comp;
@@ -76,6 +77,7 @@ static int compile_backend(SwsContext *ctx, const SwsOpBackend *backend,
         goto fail;
     }
 
+    compiled.backend = backend;
     *out = compiled;
 
     av_log(ctx, AV_LOG_VERBOSE, "Compiled using backend '%s': "
@@ -96,10 +98,12 @@ int ff_sws_ops_compile(SwsContext *ctx, const SwsOpBackend *backend,
     if (backend)
         return compile_backend(ctx, backend, ops, out);
 
+    const SwsBackend enabled = ff_sws_enabled_backends(ctx);
     for (int n = 0; ff_sws_op_backends[n]; n++) {
         const SwsOpBackend *backend = ff_sws_op_backends[n];
         if (ops->src.hw_format != backend->hw_format ||
-            ops->dst.hw_format != backend->hw_format)
+            ops->dst.hw_format != backend->hw_format ||
+            !(enabled & backend->flags))
             continue;
         if (compile_backend(ctx, backend, ops, out) < 0)
             continue;
@@ -141,6 +145,18 @@ static inline void get_row_data(const SwsOpPass *p, const int y_dst,
         in[i] = base->in[i] + (y_src >> base->in_sub_y[i]) * base->in_stride[i];
     for (int i = 0; i < p->planes_out; i++)
         out[i] = base->out[i] + (y_dst >> base->out_sub_y[i]) * base->out_stride[i];
+}
+
+static inline int get_lines_in(const SwsOpPass *p, const int y, const int h,
+                               const int plane)
+{
+    const SwsOpExec *base = &p->exec_base;
+    if (!p->offsets_y)
+        return h >> base->in_sub_y[plane];
+
+    const int y0 = p->offsets_y[y] >> base->in_sub_y[plane];
+    const int y1 = p->offsets_y[y + h - 1] >> base->in_sub_y[plane];
+    return y1 - y0 + 1;
 }
 
 static inline size_t pixel_bytes(size_t pixels, int pixel_bits,
@@ -423,8 +439,9 @@ static void op_pass_run(const SwsFrame *out, const SwsFrame *in, const int y,
 
     for (int i = 0; i < p->planes_in; i++) {
         if (memcpy_in) {
+            const int lines = get_lines_in(p, y, h, i);
             copy_lines((uint8_t *) tail.in[i], tail.in_stride[i],
-                       exec.in[i], exec.in_stride[i], h, p->tail_size_in);
+                       exec.in[i], exec.in_stride[i], lines, p->tail_size_in);
         } else {
             /* Reuse input pointers directly */
             const size_t loop_size = tail_blocks * exec.block_size_in;
@@ -447,8 +464,9 @@ static void op_pass_run(const SwsFrame *out, const SwsFrame *in, const int y,
     comp->func(&tail, comp->priv, num_blocks - tail_blocks, y, num_blocks, y + h);
 
     for (int i = 0; memcpy_out && i < p->planes_out; i++) {
+        const int lines = h >> tail.out_sub_y[i];
         copy_lines(exec.out[i], exec.out_stride[i],
-                   tail.out[i], tail.out_stride[i], h, p->tail_size_out);
+                   tail.out[i], tail.out_stride[i], lines, p->tail_size_out);
     }
 }
 
@@ -498,9 +516,12 @@ static int compile(SwsGraph *graph, const SwsOpBackend *backend,
     if (p->comp.opaque) {
         SwsCompiledOp c = *comp;
         av_free(p);
-        return ff_sws_graph_add_pass(graph, dst->format, dst->width, dst->height,
-                                     input, c.slice_align, c.func_opaque,
-                                     NULL, c.priv, c.free, output);
+        ret = ff_sws_graph_add_pass(graph, dst->format, dst->width, dst->height,
+                                    input, c.slice_align, c.func_opaque,
+                                    NULL, c.priv, c.free, output);
+        if (ret >= 0)
+            (*output)->backend = comp->backend->flags;
+        return ret;
     }
 
     const SwsOp *read  = ff_sws_op_list_input(ops);
@@ -582,6 +603,7 @@ static int compile(SwsGraph *graph, const SwsOpBackend *backend,
     if (ret < 0)
         return ret;
 
+    (*output)->backend = comp->backend->flags;
     align_pass(input,   comp->block_size, comp->over_read,  p->pixel_bits_in);
     align_pass(*output, comp->block_size, comp->over_write, p->pixel_bits_out);
     return 0;

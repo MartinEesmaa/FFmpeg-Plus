@@ -899,7 +899,7 @@ static int solve_shuffle(const SwsOpList *ops, int mmsize, SwsCompiledOp *out)
     if (pixels < 0)
         return pixels;
 
-    /* We can't shuffle acress lanes, so restrict the vector size to XMM
+    /* We can't shuffle across lanes, so restrict the vector size to XMM
      * whenever the read/write size would be a subset of the full vector */
     if (read_bytes < 16 || write_bytes < 16)
         mmsize = 16;
@@ -1054,6 +1054,7 @@ static int compile(SwsContext *ctx, SwsOpList *ops, SwsCompiledOp *out)
 
 const SwsOpBackend backend_x86 = {
     .name       = "x86",
+    .flags      = SWS_BACKEND_X86,
     .compile    = compile,
     .hw_format  = AV_PIX_FMT_NONE,
 };
