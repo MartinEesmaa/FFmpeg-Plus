@@ -56,7 +56,12 @@ static const char *tprintf(char buf[], size_t size, const char *fmt, ...)
 
 static int rw_pixel_bits(const SwsOp *op)
 {
-    const int elems = op->rw.packed ? op->rw.elems : 1;
+    int elems = 0;
+    switch (op->rw.mode) {
+    case SWS_RW_PLANAR: elems = 1; break;
+    case SWS_RW_PACKED: elems = op->rw.elems; break;
+    }
+
     const int size  = ff_sws_pixel_type_size(op->type);
     const int bits  = 8 >> op->rw.frac;
     av_assert1(bits >= 1);
@@ -173,8 +178,8 @@ static void check_compiled(const char *name,
     }
 
     int32_t in_bump_y[LINES];
-    if (read_op->rw.filter == SWS_OP_FILTER_V) {
-        const int *offsets = read_op->rw.kernel->offsets;
+    if (read_op->rw.filter.op == SWS_OP_FILTER_V) {
+        const int *offsets = read_op->rw.filter.kernel->offsets;
         for (int y = 0; y < LINES - 1; y++)
             in_bump_y[y] = offsets[y + 1] - offsets[y] - 1;
         in_bump_y[LINES - 1] = 0;
@@ -182,27 +187,27 @@ static void check_compiled(const char *name,
     }
 
     int32_t in_offset_x[PIXELS];
-    if (read_op->rw.filter == SWS_OP_FILTER_H) {
-        const int *offsets = read_op->rw.kernel->offsets;
+    if (read_op->rw.filter.op == SWS_OP_FILTER_H) {
+        const int *offsets = read_op->rw.filter.kernel->offsets;
         const int rw_bits = rw_pixel_bits(read_op);
         for (int x = 0; x < PIXELS; x++)
             in_offset_x[x] = offsets[x] * rw_bits >> 3;
         exec.in_offset_x = in_offset_x;
     }
 
-    exec.block_size_in  = comp_ref->block_size * rw_pixel_bits(read_op)  >> 3;
-    exec.block_size_out = comp_ref->block_size * rw_pixel_bits(write_op) >> 3;
     for (int i = 0; i < NB_PLANES; i++) {
         exec.in[i]  = (void *) src0[i];
         exec.out[i] = (void *) dst0[i];
+        exec.block_size_in[i]  = comp_ref->block_size * rw_pixel_bits(read_op)  >> 3;
+        exec.block_size_out[i] = comp_ref->block_size * rw_pixel_bits(write_op) >> 3;
     }
     checkasm_call(comp_ref->func, &exec, comp_ref->priv, 0, 0, PIXELS / comp_ref->block_size, LINES);
 
-    exec.block_size_in  = comp_new->block_size * rw_pixel_bits(read_op)  >> 3;
-    exec.block_size_out = comp_new->block_size * rw_pixel_bits(write_op) >> 3;
     for (int i = 0; i < NB_PLANES; i++) {
         exec.in[i]  = (void *) src1[i];
         exec.out[i] = (void *) dst1[i];
+        exec.block_size_in[i]  = comp_new->block_size * rw_pixel_bits(read_op)  >> 3;
+        exec.block_size_out[i] = comp_new->block_size * rw_pixel_bits(write_op) >> 3;
     }
     checkasm_call_checked(comp_new->func, &exec, comp_new->priv, 0, 0, PIXELS / comp_new->block_size, LINES);
 
@@ -233,7 +238,7 @@ static void check_compiled(const char *name,
             break;
         }
 
-        if (write_op->rw.packed)
+        if (write_op->rw.mode == SWS_RW_PACKED)
             break;
     }
 
@@ -394,13 +399,22 @@ static AVRational rndq(SwsPixelType t)
 
 static void check_read(const char *name, const SwsUOp *uop)
 {
+    SwsReadWriteMode mode;
+    switch (uop->uop) {
+    case SWS_UOP_READ_PACKED:
+    case SWS_UOP_READ_BIT:
+    case SWS_UOP_READ_NIBBLE: mode = SWS_RW_PACKED; break;
+    case SWS_UOP_READ_PLANAR: mode = SWS_RW_PLANAR; break;
+    default: return;
+    }
+
     const int num = mask_num(uop->mask);
     check_ops(name, NULL, (SwsOp[]) {
         {
             .op        = SWS_OP_READ,
             .type      = uop->type,
             .rw.elems  = num,
-            .rw.packed = uop->uop != SWS_UOP_READ_PLANAR,
+            .rw.mode   = mode,
             .rw.frac   = uop->uop == SWS_UOP_READ_BIT    ? 3 :
                          uop->uop == SWS_UOP_READ_NIBBLE ? 1 : 0,
         }, {
@@ -413,6 +427,15 @@ static void check_read(const char *name, const SwsUOp *uop)
 
 static void check_write(const char *name, const SwsUOp *uop)
 {
+    SwsReadWriteMode mode;
+    switch (uop->uop) {
+    case SWS_UOP_WRITE_BIT:
+    case SWS_UOP_WRITE_NIBBLE:
+    case SWS_UOP_READ_PACKED: mode = SWS_RW_PACKED; break;
+    case SWS_UOP_READ_PLANAR: mode = SWS_RW_PLANAR; break;
+    default: return;
+    }
+
     const int frac = uop->uop == SWS_UOP_WRITE_BIT    ? 3 :
                      uop->uop == SWS_UOP_WRITE_NIBBLE ? 1 : 0;
     const int num = mask_num(uop->mask);
@@ -428,7 +451,7 @@ static void check_write(const char *name, const SwsUOp *uop)
             .op        = SWS_OP_WRITE,
             .type      = uop->type,
             .rw.elems  = num,
-            .rw.packed = uop->uop != SWS_UOP_WRITE_PLANAR,
+            .rw.mode   = mode,
             .rw.frac   = frac,
         }, {0}
     });
@@ -466,8 +489,11 @@ static void check_filter(const char *name, const SwsUOp *uop)
                     .op        = SWS_OP_READ,
                     .type      = uop->type,
                     .rw.elems  = num,
-                    .rw.filter = is_vert ? SWS_OP_FILTER_V : SWS_OP_FILTER_H,
-                    .rw.kernel = filter,
+                    .rw.filter = {
+                        .op     = is_vert ? SWS_OP_FILTER_V : SWS_OP_FILTER_H,
+                        .kernel = filter,
+                        .type   = SWS_PIXEL_F32,
+                    },
                 }, {
                     .op        = SWS_OP_WRITE,
                     .type      = SWS_PIXEL_F32,

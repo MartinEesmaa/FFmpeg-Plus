@@ -35,8 +35,8 @@ static int setup_rw_packed(const SwsImplParams *params, SwsImplResult *out)
     /* 3-component packed reads/writes process one extra garbage word */
     if (uop->mask == SWS_COMP_ELEMS(3)) {
         switch (uop->uop) {
-        case SWS_UOP_READ_PACKED:  out->over_read  = sizeof(uint32_t); break;
-        case SWS_UOP_WRITE_PACKED: out->over_write = sizeof(uint32_t); break;
+        case SWS_UOP_READ_PACKED:  out->over_read[0]  = sizeof(uint32_t); break;
+        case SWS_UOP_WRITE_PACKED: out->over_write[0] = sizeof(uint32_t); break;
         }
     }
 
@@ -153,7 +153,11 @@ static int setup_filter_h(const SwsImplParams *params, SwsImplResult *out)
     out->priv.ptr = weights.ptr;
     out->priv.uptr[1] = aligned_size;
     out->free = ff_op_priv_free;
-    out->over_read = (aligned_size - filter_size) * pixel_size;
+
+    for (int i = 0; i < 4; i++) {
+        if (uop->mask & SWS_COMP(i))
+            out->over_read[i] = (aligned_size - filter_size) * pixel_size;
+    }
     return 0;
 }
 
@@ -236,7 +240,11 @@ static int setup_filter_h_4x4(const SwsImplParams *params, SwsImplResult *out)
     out->priv.ptr = weights.ptr;
     out->priv.uptr[1] = aligned_size * sizeof_weights;
     out->free = ff_op_priv_free;
-    out->over_read = (aligned_size - filter_size) * pixel_size;
+
+    for (int i = 0; i < 4; i++) {
+        if (uop->mask & SWS_COMP(i))
+            out->over_read[i] = (aligned_size - filter_size) * pixel_size;
+    }
     return 0;
 }
 
@@ -506,8 +514,8 @@ static int solve_shuffle(const SwsOpList *ops, int mmsize, SwsCompiledOp *out)
         .free        = av_free,
         .slice_align = 1,
         .block_size  = pixels * num_lanes,
-        .over_read   = movsize(in_total,  mmsize) - in_total,
-        .over_write  = movsize(out_total, mmsize) - out_total,
+        .over_read   = { movsize(in_total,  mmsize) - in_total },
+        .over_write  = { movsize(out_total, mmsize) - out_total },
         .cpu_flags   = mmsize > 32 ? AV_CPU_FLAG_AVX512 :
                        mmsize > 16 ? AV_CPU_FLAG_AVX2 :
                                      AV_CPU_FLAG_SSE4,
@@ -567,11 +575,11 @@ static int compile(SwsContext *ctx, const SwsOpList *ops, SwsCompiledOp *out)
 {
     const int cpu_flags = av_get_cpu_flags();
     int ret, mmsize;
-    if (X86_AVX512(cpu_flags))
+    if (EXTERNAL_AVX512(cpu_flags))
         mmsize = 64;
-    else if (X86_AVX2(cpu_flags))
+    else if (EXTERNAL_AVX2(cpu_flags))
         mmsize = 32;
-    else if (X86_SSE4(cpu_flags))
+    else if (EXTERNAL_SSE4(cpu_flags))
         mmsize = 16;
     else
         return AVERROR(ENOTSUP);
@@ -592,7 +600,7 @@ static int compile(SwsContext *ctx, const SwsOpList *ops, SwsCompiledOp *out)
     }
 
     SwsUOpFlags flags = SWS_UOP_FLAG_MOVE;
-    if (X86_FMA4(cpu_flags))
+    if (EXTERNAL_FMA3(cpu_flags))
         flags |= SWS_UOP_FLAG_FMA;
 
     ret = ff_sws_ops_translate(ctx, ops, flags, uops);
@@ -626,8 +634,8 @@ static int compile(SwsContext *ctx, const SwsOpList *ops, SwsCompiledOp *out)
 
     const SwsOp *read      = ff_sws_op_list_input(ops);
     const SwsOp *write     = ff_sws_op_list_output(ops);
-    const int read_planes  = read ? (read->rw.packed ? 1 : read->rw.elems) : 0;
-    const int write_planes = write->rw.packed ? 1 : write->rw.elems;
+    const int read_planes  = read ? ff_sws_rw_op_planes(read) : 0;
+    const int write_planes = ff_sws_rw_op_planes(write);
     switch (FFMAX(read_planes, write_planes)) {
     case 1: out->func = ff_sws_process1_x86; break;
     case 2: out->func = ff_sws_process2_x86; break;
@@ -640,9 +648,9 @@ static int compile(SwsContext *ctx, const SwsOpList *ops, SwsCompiledOp *out)
         return ret;
     }
 
-    out->cpu_flags  = chain->cpu_flags;
-    out->over_read  = chain->over_read;
-    out->over_write = chain->over_write;
+    out->cpu_flags = chain->cpu_flags;
+    memcpy(out->over_read,  chain->over_read,  sizeof(out->over_read));
+    memcpy(out->over_write, chain->over_write, sizeof(out->over_write));
     ff_sws_uop_list_free(&uops);
     return 0;
 

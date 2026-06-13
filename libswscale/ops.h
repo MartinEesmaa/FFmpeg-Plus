@@ -84,6 +84,20 @@ typedef struct SwsComps {
     AVRational min[4], max[4];
 } SwsComps;
 
+typedef enum SwsReadWriteMode {
+    /**
+     * Note: 1-component reads are either SWS_RW_PLANAR or SWS_RW_PACKED,
+     * depending on the underlying interpretation. If multiple components are
+     * packed into one element (e.g. rgb10a2 -> u16), they are marked as
+     * SWS_RW_PACKED. Otherwise (e.g. gray16le), they are SWS_RW_PLANAR.
+     *
+     * This is a purely semantic/informative difference; the underlying code
+     * treats 1-components reads/writes the same regardless of mode.
+     */
+    SWS_RW_PLANAR,  /* one plane per component */
+    SWS_RW_PACKED,  /* all components on a single plane */
+} SwsReadWriteMode;
+
 typedef struct SwsReadWriteOp {
     /**
      * Examples:
@@ -93,9 +107,9 @@ typedef struct SwsReadWriteOp {
      *   monow     = 1x u8 (frac 3)
      *   rgb4      = 1x u8 (frac 1)
      */
+    SwsReadWriteMode mode; /* how data is laid out in memory */
     uint8_t elems; /* number of elements (of type `op.type`) to read/write */
     uint8_t frac;  /* fractional pixel step factor (log2) */
-    bool packed;   /* read multiple elements from a single plane */
 
     /**
      * Filter kernel to apply to each plane while sampling. Currently, only
@@ -104,8 +118,11 @@ typedef struct SwsReadWriteOp {
      * Note: As with SWS_OP_FILTER_*, if a filter kernel is in use, the read
      * operation will always output floating point values.
      */
-    SwsOpType filter;         /* some value of SWS_OP_FILTER_* */
-    SwsFilterWeights *kernel; /* (refstruct) */
+    struct {
+        SwsOpType op;               /* some value of SWS_OP_FILTER_* */
+        SwsFilterWeights *kernel;   /* (refstruct) */
+        SwsPixelType type;          /* pixel type to store result as */
+    } filter;
 } SwsReadWriteOp;
 
 typedef struct SwsPackOp {
@@ -203,6 +220,7 @@ uint32_t ff_sws_linear_mask(SwsLinearOp);
 
 typedef struct SwsFilterOp {
     SwsFilterWeights *kernel; /* filter kernel (refstruct) */
+    SwsPixelType type;        /* pixel type to store result as */
 } SwsFilterOp;
 
 typedef struct SwsOp {
@@ -236,6 +254,11 @@ typedef struct SwsOp {
 
 /* Compute SwsCompMask from a mask of needed components */
 SwsCompMask ff_sws_comp_mask_needed(const SwsOp *op);
+
+/**
+ * Return the number of planes involved in a read/write operation.
+ */
+int ff_sws_rw_op_planes(const SwsOp *op);
 
 /**
  * Describe an operation in human-readable form.
