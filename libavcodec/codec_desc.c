@@ -2017,6 +2017,13 @@ static const AVCodecDescriptor codec_descriptors[] = {
         .props     = AV_CODEC_PROP_LOSSY | AV_CODEC_PROP_LOSSLESS,
         .mime_types= MT("image/webp"),
     },
+    {
+        .id        = AV_CODEC_ID_MCRAW,
+        .type      = AVMEDIA_TYPE_VIDEO,
+        .name      = "mcraw",
+        .long_name = NULL_IF_CONFIG_SMALL("MotionCam RAW"),
+        .props     = AV_CODEC_PROP_INTRA_ONLY | AV_CODEC_PROP_LOSSY,
+    },
 
     /* various PCM "codecs" */
     {
