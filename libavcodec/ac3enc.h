@@ -120,6 +120,7 @@ typedef struct AC3EncOptions {
     int stereo_rematrixing;
     int channel_coupling;
     int cpl_start;
+    int extra_surround; // Enable Dolby Surround 7.1 E-AC-3 encoding, finalize using hellgauss/HG3112's md71 program (cross-platform support by Martin Eesmaa)
 } AC3EncOptions;
 
 /**

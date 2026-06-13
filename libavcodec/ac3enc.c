@@ -19,6 +19,7 @@
  * You should have received a copy of the GNU Lesser General Public
  * License along with FFmpeg; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ * NOTE: Original patches of experiment Dolby E-AC-3 7.1 encoding by hellgauss. Current patches by Martin Eesmaa.
  */
 
 /**
@@ -124,6 +125,7 @@ const AVOption ff_ac3_enc_options[] = {
     {"auto", "Selected by the Encoder", 0, AV_OPT_TYPE_CONST, {.i64 = AC3ENC_OPT_AUTO }, INT_MIN, INT_MAX, AC3ENC_PARAM, .unit = "channel_coupling"},
 {"cpl_start_band", "Coupling Start Band", OFFSET(cpl_start), AV_OPT_TYPE_INT, {.i64 = AC3ENC_OPT_AUTO }, AC3ENC_OPT_AUTO, 15, AC3ENC_PARAM, .unit = "cpl_start_band"},
     {"auto", "Selected by the Encoder", 0, AV_OPT_TYPE_CONST, {.i64 = AC3ENC_OPT_AUTO }, INT_MIN, INT_MAX, AC3ENC_PARAM, .unit = "cpl_start_band"},
+{"extra_surround", "Enable Dolby Surround 7.1 E-AC-3 (requires md71 for final muxing)", OFFSET(extra_surround), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, AC3ENC_PARAM},
 {NULL}
 };
 
@@ -971,9 +973,14 @@ static void count_frame_bits_fixed(AC3EncodeContext *s)
     if (s->eac3) {
         /* bitstream info header */
         frame_bits += 35;
+        if (s->options.extra_surround) {
+            frame_bits += 25; // 8 compr + 1 chanmape + 16chanmap
+        }
         frame_bits += 1 + 1;
-        if (s->num_blocks != 0x6)
-            frame_bits++;
+        if (!s->options.extra_surround) {
+            if (s->num_blocks != 0x6)
+                frame_bits++;
+        }
         frame_bits++;
         /* audio frame header */
         if (s->num_blocks == 6)
@@ -987,10 +994,12 @@ static void count_frame_bits_fixed(AC3EncodeContext *s)
         if (s->lfe_on)
             frame_bits += s->num_blocks;
         /* converter exponent strategy */
+        if (!s->options.extra_surround) {
         if (s->num_blks_code != 0x3)
             frame_bits++;
         else
             frame_bits += s->fbw_channels * 5;
+        }
         /* snr offsets */
         frame_bits += 10;
         /* block start info */
@@ -1035,8 +1044,13 @@ static void count_frame_bits_fixed(AC3EncodeContext *s)
         }
 
         /* snroffste for AC-3, convsnroffste for E-AC-3 */
+        if (!s->options.extra_surround) {
         frame_bits++;
-
+        } else {
+            if (!s->eac3) {
+                frame_bits++;
+            }
+        }
         if (!s->eac3) {
             /* delta bit allocation */
             frame_bits++;
@@ -1112,10 +1126,12 @@ static void count_frame_bits(AC3EncodeContext *s)
             if (s->has_surround)
                 frame_bits += 6;
             frame_bits += s->lfe_on;
+            if (!s->options.extra_surround) {
             frame_bits += 1 + 1 + 2;
             if (s->channel_mode < AC3_CHMODE_STEREO)
                 frame_bits++;
             frame_bits++;
+            }
         }
         if (opt->eac3_info_metadata) {
             frame_bits += 3 + 1 + 1;
@@ -1827,7 +1843,9 @@ static void output_audio_block(AC3EncodeContext *s, PutBitContext *pb, int blk)
             }
         }
     } else {
+        if (!s->options.extra_surround) {
         put_bits(pb, 1, 0); /* no converter snr offset */
+        }
     }
 
     /* coupling leak */

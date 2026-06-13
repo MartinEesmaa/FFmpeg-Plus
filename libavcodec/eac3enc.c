@@ -17,6 +17,7 @@
  * You should have received a copy of the GNU Lesser General Public
  * License along with FFmpeg; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ * NOTE: Original patches of experiment Dolby E-AC-3 7.1 encoding by hellgauss. Current patches by Martin Eesmaa.
  */
 
 /**
@@ -140,7 +141,11 @@ static void eac3_output_frame_header(AC3EncodeContext *s, PutBitContext *pb)
     put_bits(pb, 16, 0x0b77);                   /* sync word */
 
     /* BSI header */
+    if (!s->options.extra_surround) {
     put_bits(pb,  2, 0);                        /* stream type = independent */
+    } else {
+    put_bits(pb,  2, 1);                        /* stream type = 01 = dependent */
+    }
     put_bits(pb,  3, 0);                        /* substream id = 0 */
     put_bits(pb, 11, (s->frame_size / 2) - 1);  /* frame size */
     put_bits(pb, 2, s->bit_alloc.sr_code);      /* sample rate code */
@@ -149,7 +154,14 @@ static void eac3_output_frame_header(AC3EncodeContext *s, PutBitContext *pb)
     put_bits(pb, 1, s->lfe_on);                 /* LFE channel indicator */
     put_bits(pb, 5, s->bitstream_id);           /* bitstream id (EAC3=16) */
     put_bits(pb, 5, -opt->dialogue_level);      /* dialogue normalization level */
+    if (!s->options.extra_surround) {
     put_bits(pb, 1, 0);                         /* no compression gain */
+    } else {
+    put_bits(pb, 1, 1);			                /* yes compression gain */
+	put_bits(pb, 8, 0);			                /* set compression gain to 0 */
+	put_bits(pb, 1, 1);			                /* chanmap exists */
+	put_bits(pb, 16, 0x1a00);	                /* set channel map to 7.1 standard */
+    }
     /* mixing metadata*/
     put_bits(pb, 1, opt->eac3_mixing_metadata);
     if (opt->eac3_mixing_metadata) {
@@ -165,12 +177,14 @@ static void eac3_output_frame_header(AC3EncodeContext *s, PutBitContext *pb)
         }
         if (s->lfe_on)
             put_bits(pb, 1, 0);
+        if (!s->options.extra_surround) {
         put_bits(pb, 1, 0);                     /* no program scale */
         put_bits(pb, 1, 0);                     /* no ext program scale */
         put_bits(pb, 2, 0);                     /* no mixing parameters */
         if (s->channel_mode < AC3_CHMODE_STEREO)
             put_bits(pb, 1, 0);                 /* no pan info */
         put_bits(pb, 1, 0);                     /* no frame mix config info */
+        }
     }
     /* info metadata*/
     put_bits(pb, 1, opt->eac3_info_metadata);
@@ -192,8 +206,10 @@ static void eac3_output_frame_header(AC3EncodeContext *s, PutBitContext *pb)
         }
         put_bits(pb, 1, 0);
     }
+    if (!s->options.extra_surround) {
     if (s->num_blocks != 6)
         put_bits(pb, 1, !(s->avctx->frame_num % 6)); /* converter sync flag */
+    }
     put_bits(pb, 1, 0);                         /* no additional bit stream info */
 
     /* frame header */
@@ -234,6 +250,7 @@ static void eac3_output_frame_header(AC3EncodeContext *s, PutBitContext *pb)
             put_bits(pb, 1, s->exp_strategy[s->lfe_channel][blk]);
     }
     /* E-AC-3 to AC-3 converter exponent strategy (not optional when num blocks == 6) */
+    if (!s->options.extra_surround) {
     if (s->num_blocks != 6) {
         put_bits(pb, 1, 0);
     } else {
@@ -244,6 +261,7 @@ static void eac3_output_frame_header(AC3EncodeContext *s, PutBitContext *pb)
                 put_bits(pb, 5, 0);
         }
     }
+}
     /* snr offsets */
     put_bits(pb, 6, s->coarse_snr_offset);
     put_bits(pb, 4, s->fine_snr_offset[1]);
