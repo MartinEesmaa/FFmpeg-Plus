@@ -26,11 +26,13 @@
 #include "avio.h"
 #include "demux.h"
 #include "internal.h"
-#include "rawdec.h"
 
 static int sac_read_probe(const AVProbeData *p)
 {
     int srate_hz;
+
+    if (p->buf_size < 32)
+        return 0;
 
     if (!memcmp(p->buf, "SAC2", 4))
         return AVPROBE_SCORE_EXTENSION;
@@ -45,9 +47,9 @@ static int sac_read_probe(const AVProbeData *p)
 
 static int sac_read_header(AVFormatContext *s)
 {
-    AVStream *st;
+    AVStream *st = NULL;
     int srate_hz, channels, bits_per_sample;
-    int num_samples;
+    int length;
     int metadata_size;
     int max_frame_len;
 
@@ -55,26 +57,26 @@ static int sac_read_header(AVFormatContext *s)
     channels = avio_rl16(s->pb);
     srate_hz = avio_rl32(s->pb);
     bits_per_sample = avio_rl16(s->pb);
-    num_samples     = avio_rl32(s->pb);
+    length          = avio_rl32(s->pb);
     max_frame_len   = avio_r8(s->pb);
 
     avio_skip(s->pb, 1); /* reserved byte */
 
     metadata_size = avio_rl32(s->pb);
 
-    st = avformat_new_stream(s, 0);
+    st = avformat_new_stream(s, NULL);
     if (!st)
         return AVERROR(ENOMEM);
 
+    avpriv_set_pts_info(st, 64, 1, srate_hz);
+    avpriv_update_cur_dts(s, st, 0);
+    st->duration = length;
+
     st->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
     st->codecpar->codec_id = AV_CODEC_ID_SAC;
-    st->codecpar->ch_layout.nb_channels = channels;
     st->codecpar->sample_rate = srate_hz;
     st->codecpar->bits_per_coded_sample = bits_per_sample;
-
-    avpriv_set_pts_info(st, 64, 1, srate_hz);
-
-    st->duration = num_samples;
+    st->codecpar->ch_layout.nb_channels = channels;
 
     /* Skip metadata block */
     if (avio_skip(s->pb, metadata_size) < 0)
