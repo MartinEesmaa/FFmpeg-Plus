@@ -234,7 +234,6 @@ Codecs:
   nuv.c                                 Reimar Doeffinger
   nvdec*, nvenc*                        Timo Rothenpieler
   oh*                                   Zhao Zhili
-  omx.c                                 Martin Storsjo, Aman Gupta
   opus*                                 Rostislav Pehlivanov
   pcx.c                                 Ivo van Poorten
   pgssubdec.c                           Reimar Doeffinger
@@ -253,7 +252,6 @@ Codecs:
   sanm.c                                Manuel Lauss
   smc.c                                 Mike Melanson
   snow*                                 Michael Niedermayer, Loren Merritt
-  sonic.c                               Alex Beregszaszi
   speedhq.c                             Steinar H. Gunderson
   srt*                                  Aurelien Jacobs
   sunrast.c                             Ivo van Poorten

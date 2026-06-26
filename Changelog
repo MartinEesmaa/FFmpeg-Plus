@@ -2,6 +2,8 @@ Entries are sorted chronologically from oldest to youngest within each release,
 releases are sorted from youngest to oldest.
 
 version <next>:
+
+version 9.0:
 - Extend AMF Color Converter (vf_vpp_amf) HDR capabilities
 - LCEVC track muxing support in MP4 muxer
 - Playdate video encoder and muxer
@@ -18,6 +20,8 @@ version <next>:
 - Remove ogg/celt parsing
 - Bitstream filter to split Dolby Vision multi-layer HEVC
 - Add AMF hardware memory mapping support.
+- ONNX Runtime DNN backend with GPU execution provider support
+- Remove deprecated NVENC options and support for pre-11.1 SDK versions
 
 
 version 8.1:
