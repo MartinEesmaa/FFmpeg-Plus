@@ -185,7 +185,7 @@ static int pred_weight_table(SliceHeader *sh, void *logctx,
         av_log(logctx, AV_LOG_ERROR, "luma_log2_weight_denom %d is invalid\n", luma_log2_weight_denom);
         return AVERROR_INVALIDDATA;
     }
-    sh->luma_log2_weight_denom = av_clip_uintp2(luma_log2_weight_denom, 3);
+    sh->luma_log2_weight_denom = luma_log2_weight_denom;
     if (sps->chroma_format_idc != 0) {
         int64_t chroma_log2_weight_denom = luma_log2_weight_denom + (int64_t)get_se_golomb(gb);
         if (chroma_log2_weight_denom < 0 || chroma_log2_weight_denom > 7) {
@@ -1835,7 +1835,7 @@ static void luma_mc_bi(HEVCLocalContext *lc,
                                                          block_h, s->sh.luma_log2_weight_denom,
                                                          s->sh.luma_weight_l0[current_mv->ref_idx[0]],
                                                          s->sh.luma_weight_l1[current_mv->ref_idx[1]],
-                                                         s->sh.luma_offset_l0[current_mv->ref_idx[0]],
+                                                         s->sh.luma_offset_l0[current_mv->ref_idx[0]] +
                                                          s->sh.luma_offset_l1[current_mv->ref_idx[1]],
                                                          mx1, my1, block_w);
 
@@ -2016,7 +2016,7 @@ static void chroma_mc_bi(HEVCLocalContext *lc,
                                                          s->sh.chroma_log2_weight_denom,
                                                          s->sh.chroma_weight_l0[current_mv->ref_idx[0]][cidx],
                                                          s->sh.chroma_weight_l1[current_mv->ref_idx[1]][cidx],
-                                                         s->sh.chroma_offset_l0[current_mv->ref_idx[0]][cidx],
+                                                         s->sh.chroma_offset_l0[current_mv->ref_idx[0]][cidx] +
                                                          s->sh.chroma_offset_l1[current_mv->ref_idx[1]][cidx],
                                                          _mx1, _my1, block_w);
 }
