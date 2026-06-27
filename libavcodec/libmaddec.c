@@ -158,12 +158,12 @@ static int libmad_decode_frame(AVCodecContext *avc, AVFrame *frame,
     return mad->stream.bufend - mad->stream.next_frame;
 }
 
-FFCodec ff_libmad_decoder = {
+const FFCodec ff_libmad_decoder = {
     .p.name           = "libmad",
     CODEC_LONG_NAME("libmad MP3 decoder"),
     .p.type           = AVMEDIA_TYPE_AUDIO,
     .p.id             = AV_CODEC_ID_MP3,
-    .p.sample_fmts    = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_S16, AV_SAMPLE_FMT_NONE },
+    CODEC_SAMPLEFMTS(AV_SAMPLE_FMT_S16, AV_SAMPLE_FMT_NONE),
     .p.capabilities   = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_CHANNEL_CONF,
     .priv_data_size   = sizeof(libmad_context),
     .init             = libmad_decode_init,

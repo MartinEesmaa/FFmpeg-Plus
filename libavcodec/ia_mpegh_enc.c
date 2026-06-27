@@ -1260,19 +1260,16 @@ static int ia_mpegh_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
 	return 0;
 }
 
-FFCodec ff_ia_mpegh_encoder = {
-	.p.name = "ia_mpeghe",
-	.p.long_name = NULL_IF_CONFIG_SMALL("Ittiam MPEGH Encoder"),
-	.p.type = AVMEDIA_TYPE_AUDIO,
-	.p.id	= AV_CODEC_ID_MPEGH_3D_AUDIO,
+const FFCodec ff_ia_mpegh_encoder = {
+	.p.name         = "ia_mpeghe",
+	.p.long_name    = NULL_IF_CONFIG_SMALL("Ittiam MPEGH Encoder"),
+	.p.type         = AVMEDIA_TYPE_AUDIO,
+	.p.id           = AV_CODEC_ID_MPEGH_3D_AUDIO,
 	.priv_data_size = sizeof(IA_MPEGH_Context),
-	.init = ia_mpegh_encode_init,
+	.init           = ia_mpegh_encode_init,
 	FF_CODEC_ENCODE_CB(ia_mpegh_encode_frame),
-	.close = ia_mpegh_encode_close,
-	.p.sample_fmts = (const enum AVSampleFormat[]) {
- AV_SAMPLE_FMT_S16,AV_SAMPLE_FMT_S32,
-AV_SAMPLE_FMT_NONE
-},
-.p.capabilities = AV_CODEC_CAP_SMALL_LAST_FRAME | AV_CODEC_CAP_DELAY,
-.p.priv_class = &ia_mpegh_enc_class,
+	.close          = ia_mpegh_encode_close,
+	CODEC_SAMPLEFMTS(AV_SAMPLE_FMT_S16, AV_SAMPLE_FMT_S32, AV_SAMPLE_FMT_NONE),
+	.p.capabilities = AV_CODEC_CAP_SMALL_LAST_FRAME | AV_CODEC_CAP_DELAY,
+	.p.priv_class   = &ia_mpegh_enc_class,
 };
